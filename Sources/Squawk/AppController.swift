@@ -32,6 +32,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var isLearningShortcut = false
     private var unloadTimer: Timer?
     private var pendingFinish: DispatchWorkItem?
+    private var tail = SpeechTail()
     /// The app the last dictation went into, cleared as soon as the user types
     /// or clicks. While it is set, the cursor is still right after that text.
     private var continuingIn: pid_t?
@@ -67,7 +68,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard ProcessInfo.processInfo.systemUptime - lastPasteAt > 0.4 else { return }
             continuingIn = nil
         }
-        recorder.onLevel = { [overlay] rms in overlay.history.push(rms: rms) }
+        recorder.onLevel = { [unowned self] rms in
+            overlay.history.push(rms: rms)
+            tail.heard(rms: rms, at: ProcessInfo.processInfo.systemUptime)
+        }
         recorder.onError = { [unowned self] error in
             overlay.hide()
             gesture = HoldGesture()
@@ -153,6 +157,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             overlay.show()
             CATransaction.flush()
             playSound("Tink")
+            tail = SpeechTail()
             recorder.start()
             unloadTimer?.invalidate()
             // Warm the models while the user is still talking.
@@ -163,17 +168,21 @@ final class AppController: NSObject, NSApplicationDelegate {
             show(.idle)
             scheduleUnload()
         case .finish:
-            // Keep listening a moment past key release: people let go on the
-            // last syllable, and the tail of that word is still in the air.
+            // Keep listening past key release until the voice goes quiet:
+            // people let go on the last syllable, and a recording that ends
+            // mid-word comes back from the model empty or as a wrong word.
             show(.working)
             overlay.hide()
             playSound("Pop")
+            let releasedAt = ProcessInfo.processInfo.systemUptime
             let work = DispatchWorkItem { [unowned self] in
                 pendingFinish = nil
+                let waited = ProcessInfo.processInfo.systemUptime - releasedAt
+                log.notice("tail: \(Int(waited * 1000), privacy: .public) ms")
                 finish()
             }
             pendingFinish = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+            finishWhenQuiet(work, releasedAt: releasedAt)
         case nil:
             break
         }
@@ -182,6 +191,18 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func playSound(_ name: String) {
         guard Preferences.playSounds else { return }
         NSSound(named: name)?.play()
+    }
+
+    private func finishWhenQuiet(_ work: DispatchWorkItem, releasedAt: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [unowned self] in
+            // A new key press or a cancel has already dealt with this one.
+            guard pendingFinish === work else { return }
+            if tail.isFinished(releasedAt: releasedAt, now: ProcessInfo.processInfo.systemUptime) {
+                work.perform()
+            } else {
+                finishWhenQuiet(work, releasedAt: releasedAt)
+            }
+        }
     }
 
     private func flushPendingFinish() {

@@ -16,6 +16,8 @@ actor Transcriber {
 
     /// FluidAudio rejects anything shorter with `ASRError.invalidAudioData`.
     static let minimumSamples = 4800
+    /// 0.3 s at 16 kHz.
+    private static let trailingSilence = 4800
 
     private var manager: AsrManager?
     private var boosting: (names: [NameEntry], session: VocabularyBoostingSession)?
@@ -49,6 +51,9 @@ actor Transcriber {
 
     func transcribe(_ samples: [Float], names: [NameEntry] = []) async throws -> Output {
         try await prepare()
+        // Audio that stops dead makes the decoder emit nothing for short
+        // clips; a little silence after it lets the last word close.
+        let samples = samples + [Float](repeating: 0, count: Self.trailingSilence)
         guard let manager else { return Output(text: "") }
         var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
         let result = try await manager.transcribe(samples, decoderState: &state)
