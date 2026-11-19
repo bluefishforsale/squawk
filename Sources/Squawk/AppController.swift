@@ -54,7 +54,8 @@ final class AppController: NSObject, NSApplicationDelegate {
                     applyPause()
                 },
                 hear: { [unowned self] in await hear() },
-                installUpdate: { [unowned self] in installUpdate() }))
+                installUpdate: { [unowned self] in installUpdate() },
+                installModel: { [unowned self] in installModel() }))
 
         hotkeys.onEdge = { [unowned self] edge in
             if edge != .chord {
@@ -108,6 +109,43 @@ final class AppController: NSObject, NSApplicationDelegate {
                 // Offline is normal for this app; try again tomorrow.
                 log.notice("update check failed: \(error.localizedDescription, privacy: .public)")
             }
+            show(status)
+        }
+        // The speech model is checked on the same schedule but separately,
+        // and unlike the app check it also runs in local builds.
+        Task { @MainActor in
+            if case .installing = panel.modelProgress { return }
+            do {
+                panel.modelUpdate = try await ModelStore.check()
+                log.notice("model check: \(self.panel.modelUpdate?.revision ?? "none", privacy: .public)")
+            } catch {
+                log.notice("model check failed: \(error.localizedDescription, privacy: .public)")
+            }
+            show(status)
+        }
+    }
+
+    private func installModel() {
+        guard let update = panel.modelUpdate else { return }
+        if case .installing = panel.modelProgress { return }
+        panel.modelProgress = .installing(0)
+        unloadTimer?.invalidate()
+        Task { @MainActor in
+            do {
+                try await transcriber.install(revision: update.revision) { [panel] fraction in
+                    DispatchQueue.main.async {
+                        if case .installing = panel.modelProgress { panel.modelProgress = .installing(fraction) }
+                    }
+                }
+                log.notice("model installed: \(update.revision, privacy: .public)")
+                panel.modelUpdate = nil
+                panel.modelProgress = .idle
+                panel.modelRevision = ModelStore.active.revision
+            } catch {
+                log.error("model install failed: \(error.localizedDescription, privacy: .public)")
+                panel.modelProgress = .failed(error.localizedDescription)
+            }
+            scheduleUnload()
             show(status)
         }
     }
@@ -173,7 +211,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             hotkeys.binding = Preferences.binding
             applyPause()
             recorder.setReadiness(Preferences.microphone, enabled: Preferences.isEnabled)
-            if !Preferences.checkForUpdates { panel.update = nil }
+            if !Preferences.checkForUpdates {
+                panel.update = nil
+                if panel.modelProgress == .idle { panel.modelUpdate = nil }
+            }
             show(status)
         }
     }
@@ -375,7 +416,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         // An orange dot beside the crow is the whole update notice: it never
         // interrupts, and the panel explains it.
         statusItem.button?.attributedTitle = NSAttributedString(
-            string: panel.update == nil ? "" : "●",
+            string: panel.update == nil && panel.modelUpdate == nil ? "" : "●",
             attributes: [.foregroundColor: NSColor.systemOrange, .font: NSFont.systemFont(ofSize: 7)])
     }
 

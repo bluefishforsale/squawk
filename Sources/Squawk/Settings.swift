@@ -29,7 +29,7 @@ enum Preferences {
             spaceAfterPunctuationKey: true,
             endWithPeriodKey: true,
             playSoundsKey: true,
-            microphoneKey: MicrophoneReadiness.warm.rawValue,
+            microphoneKey: MicrophoneReadiness.onDemand.rawValue,
             unloadMinutesKey: 10,
             checkForUpdatesKey: true,
         ])
@@ -60,7 +60,7 @@ enum Preferences {
     }
 
     static var microphone: MicrophoneReadiness {
-        defaults.string(forKey: microphoneKey).flatMap(MicrophoneReadiness.init) ?? .warm
+        defaults.string(forKey: microphoneKey).flatMap(MicrophoneReadiness.init) ?? .onDemand
     }
 
     static var playSounds: Bool {
@@ -93,6 +93,17 @@ final class PanelModel: ObservableObject {
     @Published var isProblem = false
     @Published var update: AvailableUpdate?
     @Published var updateProgress = UpdateProgress.idle
+
+    enum ModelProgress: Equatable {
+        case idle
+        case installing(Double)
+        case failed(String)
+    }
+
+    @Published var modelUpdate: ModelUpdate?
+    @Published var modelProgress = ModelProgress.idle
+    /// The pinned revision in use, or nil for the first download.
+    @Published var modelRevision = ModelStore.active.revision
 }
 
 /// Everything Squawk has to show, in the one panel that drops from the menu
@@ -105,6 +116,7 @@ struct PanelView: View {
     /// without name correction, for training a name.
     let hear: () async -> String?
     let installUpdate: () -> Void
+    let installModel: () -> Void
 
     @AppStorage(Preferences.enabledKey) private var enabled = true
     @AppStorage(Preferences.removeFillersKey) private var removeFillers = true
@@ -112,7 +124,7 @@ struct PanelView: View {
     @AppStorage(Preferences.spaceAfterPunctuationKey) private var spaceAfterPunctuation = true
     @AppStorage(Preferences.endWithPeriodKey) private var endWithPeriod = true
     @AppStorage(Preferences.playSoundsKey) private var playSounds = true
-    @AppStorage(Preferences.microphoneKey) private var microphone = MicrophoneReadiness.warm
+    @AppStorage(Preferences.microphoneKey) private var microphone = MicrophoneReadiness.onDemand
     @AppStorage(Preferences.replacementsKey) private var replacements = ""
     @AppStorage(Preferences.unloadMinutesKey) private var unloadMinutes = 10
     @AppStorage(Preferences.checkForUpdatesKey) private var checkForUpdates = true
@@ -127,6 +139,7 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if let update = model.update { updateBanner(update) }
+            if let update = model.modelUpdate { modelBanner(update) }
             paneButtons
 
             switch pane {
@@ -285,8 +298,10 @@ struct PanelView: View {
                     }
                     Divider()
                     Row("Check for updates daily") { Switch(isOn: $checkForUpdates) }
-                        .help("Asks GitHub for the latest release. Nothing about you or this Mac is sent.")
+                        .help("Asks GitHub for a newer Squawk and Hugging Face for a newer speech model. Nothing about you or this Mac is sent.")
         }
+        Text("Speech model: Parakeet TDT 0.6B v3, \(model.modelRevision.map { "revision \($0.prefix(7))" } ?? "as first downloaded")")
+            .font(.caption).foregroundStyle(.secondary)
     }
 
     private var header: some View {
@@ -327,6 +342,40 @@ struct PanelView: View {
                 }
             }
         }
+    }
+
+    /// The speech model updates on its own track: same banner, separate
+    /// button, and the app itself is not replaced.
+    private func modelBanner(_ update: ModelUpdate) -> some View {
+        Card {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("A newer speech model is available").font(.callout.weight(.medium))
+                    switch model.modelProgress {
+                    case .idle:
+                        Text(Self.describe(update)).font(.caption).foregroundStyle(.secondary)
+                    case .installing(let fraction):
+                        Text(fraction < 1 ? "Downloading, \(Int(fraction * 100))%" : "Testing the new model…")
+                            .font(.caption).foregroundStyle(.secondary)
+                    case .failed(let message):
+                        Text(message).font(.caption).foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer()
+                if case .installing(let fraction) = model.modelProgress {
+                    ProgressView(value: fraction).progressViewStyle(.circular).controlSize(.small)
+                } else {
+                    Button("Update", action: installModel).controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private static func describe(_ update: ModelUpdate) -> String {
+        let size = ByteCountFormatter.string(fromByteCount: Int64(update.bytes), countStyle: .file)
+        guard let published = update.published else { return "\(size) download" }
+        return "Published \(published.formatted(date: .abbreviated, time: .omitted)), \(size) download"
     }
 
     private func train(_ id: UUID) {
