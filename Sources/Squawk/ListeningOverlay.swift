@@ -54,10 +54,16 @@ final class ListeningOverlay {
     let history = LevelHistory()
     private var panel: NSPanel?
 
+    /// Builds the window ahead of time; creating a SwiftUI hosting view on
+    /// the first key press is a visible delay.
+    func prepare() {
+        panel = panel ?? makePanel()
+    }
+
     func show() {
         history.reset()
-        let panel = panel ?? makePanel()
-        self.panel = panel
+        prepare()
+        guard let panel else { return }
         // Under the menu bar of the screen being typed on. visibleFrame already
         // excludes the menu bar, and the menu bar is as tall as the camera
         // notch on notched displays, so this can never sit behind it.

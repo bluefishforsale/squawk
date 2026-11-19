@@ -35,6 +35,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// The app the last dictation went into, cleared as soon as the user types
     /// or clicks. While it is set, the cursor is still right after that text.
     private var continuingIn: pid_t?
+    private var lastPasteAt: TimeInterval = 0
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -60,8 +61,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             case .chord: perform(gesture.otherKeyDown())
             }
         }
-        hotkeys.onUserInput = { [unowned self] in continuingIn = nil }
+        hotkeys.onUserInput = { [unowned self] in
+            // The paste's own Cmd+V arrives back through the tap a moment
+            // after it is posted; it must not count as the user typing.
+            guard ProcessInfo.processInfo.systemUptime - lastPasteAt > 0.4 else { return }
+            continuingIn = nil
+        }
         recorder.onLevel = { [overlay] rms in overlay.history.push(rms: rms) }
+        overlay.prepare()
         NotificationCenter.default.addObserver(
             self, selector: #selector(preferencesChanged), name: UserDefaults.didChangeNotification, object: nil)
         preferencesChanged()
@@ -134,14 +141,18 @@ final class AppController: NSObject, NSApplicationDelegate {
         switch action {
         case .start:
             flushPendingFinish()
+            // Opening the microphone blocks for 150 ms or more, so the overlay
+            // goes up and is pushed to the screen before that starts.
+            show(.recording)
+            overlay.show()
+            CATransaction.flush()
+            playSound("Tink")
             do {
                 try recorder.start()
             } catch {
+                overlay.hide()
                 return show(.problem("Microphone: \(error.localizedDescription)"))
             }
-            show(.recording)
-            overlay.show()
-            playSound("Tink")
             unloadTimer?.invalidate()
             // Warm the models while the user is still talking.
             Task { try? await transcriber.prepare(names: Preferences.names) }
@@ -201,6 +212,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 if !text.isEmpty {
                     TextInserter.paste(text, leadingSpace: cleanup.spaceAfterPunctuation && needsLeadingSpace(text))
                     continuingIn = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    lastPasteAt = ProcessInfo.processInfo.systemUptime
                 }
                 show(output.warning.map(Status.problem) ?? .idle)
             } catch {
@@ -214,13 +226,20 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// that back-to-back dictations do not run together as "one.Two".
     private func needsLeadingSpace(_ text: String) -> Bool {
         guard let first = text.first, !first.isPunctuation else { return false }
-        if let known = TextInserter.characterBeforeCursor() {
-            guard let before = known else { return false }
-            return !before.isWhitespace && !"([{\"'“‘".contains(before)
+        // Squawk's own knowledge comes first: it just dictated into this app
+        // and nothing was typed or clicked since, so the cursor sits right
+        // after that text. Terminals answer the accessibility query below with
+        // nonsense (position zero, or a blank cell), so it cannot be trusted
+        // to overrule this.
+        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let continuing = continuingIn != nil && continuingIn == frontmost
+        var before: Character?
+        if case .some(.some(let character)) = TextInserter.characterBeforeCursor() {
+            before = character
         }
-        // The app would not say what precedes the cursor. Fall back to what
-        // Squawk knows: it just dictated here and nothing was typed since.
-        return continuingIn != nil && continuingIn == NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let afterText = before.map { !$0.isWhitespace && !"([{\"'“‘".contains($0) } ?? false
+        log.notice("leading space: continuing=\(continuing, privacy: .public) afterText=\(afterText, privacy: .public)")
+        return continuing || afterText
     }
 
     /// Settings' Train button: listen briefly and report what the recognizer
