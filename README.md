@@ -1,5 +1,7 @@
 # Squawk
 
+![Squawk: private dictation, right on your Mac. Apple Silicon, offline, free.](design/banner.svg)
+
 Hold a key, talk, let go, and the words land wherever your cursor is. Squawk is
 a free dictation app for Apple Silicon Macs. It runs NVIDIA's Parakeet speech
 model on the Neural Engine, and nothing you say or type leaves the machine.

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+<title id="title">Squawk — private offline dictation</title><desc id="desc">A raven in a midnight blue field with waveform accents and the Squawk name.</desc>
+<defs>
+ <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101a2b"/><stop offset="1" stop-color="#202f42"/></linearGradient>
+ <radialGradient id="glow"><stop stop-color="#34d4bc" stop-opacity=".22"/><stop offset="1" stop-color="#34d4bc" stop-opacity="0"/></radialGradient>
+ <linearGradient id="bird" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#182435"/><stop offset="1" stop-color="#090e16"/></linearGradient>
+</defs>
+<rect width="1200" height="420" rx="28" fill="url(#bg)"/>
+<circle cx="905" cy="205" r="280" fill="url(#glow)"/>
+<g fill="none" stroke="#43d6bd" stroke-opacity=".14"><path d="M0 340H1200M0 352H1200M0 364H1200"/><path d="M40 0V420M52 0V420M64 0V420"/></g>
+<!-- waveform motif -->
+<g stroke="#42d9bf" stroke-width="4" stroke-linecap="round" opacity=".85">
+ <path d="M765 213v18M784 194v55M803 174v92M822 190v60M841 202v38M860 181v80M879 163v116M898 190v62M917 205v31M936 184v74M955 196v52M974 174v93M993 190v61M1012 205v31M1031 186v68M1050 199v45M1069 178v86M1088 196v50M1107 207v28"/>
+</g>
+<!-- Raven mark, inspired by supplied silhouette -->
+<g transform="translate(720 65) scale(.66)" fill="url(#bird)">
+ <path d="M283 36c57-9 127 7 178 43 29 20 54 42 74 69-63-20-129-23-188-10-20 5-36 19-47 39l-25 45c33-12 71-17 112-14 49 3 95 19 135 49-70-12-125-8-167 11-26 12-51 30-77 52 67 16 128 44 183 83 68 49 122 111 164 187-74-47-147-74-221-82-47-5-91-2-133 10 57 18 102 46 135 84 29 34 49 74 58 120-41-39-85-66-132-82-44-15-94-20-149-13-56 8-105 3-145-14-34-15-63-41-86-78-21-34-36-71-46-111-11-47-14-93-8-139 6-49 22-95 48-137 26-42 62-74 107-96 41-21 84-33 130-35 48-2 101 8 158 28 12-9 22-14 32-16z"/>
+ <path d="M224 215c-41 11-77 34-108 69-28 31-49 70-62 117 38-19 77-27 118-23-22 25-38 54-48 88 35-22 70-34 106-37-14 30-20 62-19 96 22-30 49-51 81-65 32-13 68-19 107-16-61-37-106-80-134-129-22-38-35-72-41-100z"/>
+ <circle cx="483" cy="116" r="8" fill="#56e4cb"/>
+</g>
+<g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+ <text x="82" y="148" fill="#55dfc7" font-size="17" font-weight="700" letter-spacing="4">SPEAK FREELY</text>
+ <text x="78" y="246" fill="#f4f7fa" font-size="100" font-weight="750" letter-spacing="-5">Squawk</text>
+ <text x="84" y="296" fill="#d1dce6" font-size="23" font-weight="500">Private dictation. Right on your Mac.</text>
+ <g font-size="13" font-weight="700" letter-spacing="1.2">
+  <rect x="82" y="335" width="144" height="34" rx="17" fill="#24394a"/><text x="100" y="357" fill="#66e0ca">APPLE SILICON</text>
+  <rect x="238" y="335" width="105" height="34" rx="17" fill="#24394a"/><text x="256" y="357" fill="#66e0ca">OFFLINE</text>
+  <rect x="355" y="335" width="82" height="34" rx="17" fill="#24394a"/><text x="374" y="357" fill="#66e0ca">FREE</text>
+ </g>
+</g>
+<path d="M28 1h1144a27 27 0 0 1 27 27v364a27 27 0 0 1-27 27H28a27 27 0 0 1-27-27V28A27 27 0 0 1 28 1z" fill="none" stroke="#7890a4" stroke-opacity=".18" stroke-width="2"/>
+</svg>
