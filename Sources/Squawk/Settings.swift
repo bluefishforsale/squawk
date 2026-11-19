@@ -14,6 +14,7 @@ enum Preferences {
     static let spaceAfterPunctuationKey = "spaceAfterPunctuation"
     static let endWithPeriodKey = "endWithPeriod"
     static let playSoundsKey = "playSounds"
+    static let microphoneKey = "microphone"
     static let replacementsKey = "replacements"
     static let unloadMinutesKey = "unloadMinutes"
 
@@ -27,6 +28,7 @@ enum Preferences {
             spaceAfterPunctuationKey: true,
             endWithPeriodKey: true,
             playSoundsKey: true,
+            microphoneKey: MicrophoneReadiness.warm.rawValue,
             unloadMinutesKey: 10,
         ])
     }
@@ -53,6 +55,10 @@ enum Preferences {
             spaceAfterPunctuation: defaults.bool(forKey: spaceAfterPunctuationKey),
             endWithPeriod: defaults.bool(forKey: endWithPeriodKey),
             replacements: Replacement.parse(defaults.string(forKey: replacementsKey) ?? ""))
+    }
+
+    static var microphone: MicrophoneReadiness {
+        defaults.string(forKey: microphoneKey).flatMap(MicrophoneReadiness.init) ?? .warm
     }
 
     static var playSounds: Bool {
@@ -82,6 +88,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.spaceAfterPunctuationKey) private var spaceAfterPunctuation = true
     @AppStorage(Preferences.endWithPeriodKey) private var endWithPeriod = true
     @AppStorage(Preferences.playSoundsKey) private var playSounds = true
+    @AppStorage(Preferences.microphoneKey) private var microphone = MicrophoneReadiness.warm
     @AppStorage(Preferences.replacementsKey) private var replacements = ""
     @AppStorage(Preferences.unloadMinutesKey) private var unloadMinutes = 10
     @State private var binding = Preferences.binding
@@ -102,6 +109,11 @@ struct SettingsView: View {
                 Text("Hold to dictate. Double-tap to lock hands-free, tap again to stop.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Toggle("Play a sound when listening starts and stops", isOn: $playSounds)
+                Picker("Keep microphone open", selection: $microphone) {
+                    ForEach(MicrophoneReadiness.allCases) { Text($0.label).tag($0) }
+                }
+                Text("Opening the microphone takes a moment and swallows the first word. Keeping it open avoids that; macOS shows its microphone indicator while it is open, and Bluetooth headsets drop to call quality.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             .onChange(of: binding) { _, new in Preferences.binding = new }
 

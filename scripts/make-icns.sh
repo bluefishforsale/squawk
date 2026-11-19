@@ -1,6 +1,7 @@
 #!/bin/bash
-# Turns the icon SVG into packaging/Squawk.icns, the file bundle.sh copies
-# into the app. Run it again whenever the artwork changes.
+# Turns the icon SVGs into packaging/Squawk.icns and packaging/MenuBarCrow.png,
+# the files bundle.sh copies into the app. Run it again whenever the artwork
+# changes.
 #
 #   scripts/make-icns.sh [design/icons/squawk-icon.svg]
 set -euo pipefail
@@ -20,3 +21,8 @@ done
 
 iconutil --convert icns --output packaging/Squawk.icns "$iconset"
 echo packaging/Squawk.icns
+
+# The menu bar glyph is 18 pt; 72 px covers it at up to 4x.
+swift scripts/render-svg.swift 72 design/icons/menubar-crow.svg >/dev/null
+cp design/icons/menubar-crow.png packaging/MenuBarCrow.png
+echo packaging/MenuBarCrow.png

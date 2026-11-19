@@ -68,6 +68,11 @@ final class AppController: NSObject, NSApplicationDelegate {
             continuingIn = nil
         }
         recorder.onLevel = { [overlay] rms in overlay.history.push(rms: rms) }
+        recorder.onError = { [unowned self] error in
+            overlay.hide()
+            gesture = HoldGesture()
+            show(.problem("Microphone: \(error.localizedDescription)"))
+        }
         overlay.prepare()
         NotificationCenter.default.addObserver(
             self, selector: #selector(preferencesChanged), name: UserDefaults.didChangeNotification, object: nil)
@@ -114,6 +119,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [self] in
             hotkeys.binding = Preferences.binding
             applyPause()
+            recorder.setReadiness(Preferences.microphone, enabled: Preferences.isEnabled)
             show(status)
         }
     }
@@ -147,12 +153,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             overlay.show()
             CATransaction.flush()
             playSound("Tink")
-            do {
-                try recorder.start()
-            } catch {
-                overlay.hide()
-                return show(.problem("Microphone: \(error.localizedDescription)"))
-            }
+            recorder.start()
             unloadTimer?.invalidate()
             // Warm the models while the user is still talking.
             Task { try? await transcriber.prepare(names: Preferences.names) }
@@ -246,7 +247,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// wrote, with name correction off so the raw mishearing comes back.
     private func hear() async -> String? {
         do {
-            try recorder.start()
+            recorder.start()
             try await Task.sleep(for: .seconds(2.5))
             let samples = try recorder.stop()
             guard samples.count >= Transcriber.minimumSamples else { return nil }
@@ -277,35 +278,51 @@ final class AppController: NSObject, NSApplicationDelegate {
         let enabled = Preferences.isEnabled
         enabledItem.state = enabled ? .on : .off
 
-        let symbol: String
-        var tint: NSColor?
+        // The crow is a template image, which macOS draws in whatever
+        // contrasts with the menu bar, light or dark. It is dimmed when Squawk
+        // is not listening for the key, and red while it is recording.
+        var image = crow
+        var dimmed = false
         switch status {
         case .preparing:
-            symbol = "arrow.down.circle"
+            dimmed = true
             statusLine.title = "Preparing speech model…"
         case .idle:
-            symbol = enabled ? "mic" : "mic.slash"
+            dimmed = !enabled
             statusLine.title =
                 enabled ? "Hold \(Preferences.binding.keycaps.joined(separator: " + ")) to dictate" : "Dictation is off"
         case .recording:
-            (symbol, tint) = ("mic.fill", .systemRed)
+            image = crow.map { Self.tinted($0, .systemRed) }
             statusLine.title = "Listening…"
         case .working:
-            symbol = "ellipsis"
             statusLine.title = "Transcribing…"
         case .problem(let message):
-            (symbol, tint) = ("exclamationmark.triangle", .systemYellow)
+            image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(paletteColors: [.systemYellow]))
             statusLine.title = message
         }
-        // A template image is drawn by macOS in whatever contrasts with the
-        // menu bar, light or dark. Only the two alert states carry a color.
-        var image = NSImage(systemSymbolName: symbol, accessibilityDescription: statusLine.title)
-        if let tint {
-            image = image?.withSymbolConfiguration(.init(paletteColors: [tint]))
-        }
-        image?.isTemplate = tint == nil
+        image?.accessibilityDescription = statusLine.title
         statusItem.button?.image = image
-        statusItem.button?.contentTintColor = nil
+        statusItem.button?.appearsDisabled = dimmed
+    }
+
+    private lazy var crow: NSImage? = {
+        // Missing when run outside the app bundle (swift run); fall back to a symbol.
+        guard let url = Bundle.main.url(forResource: "MenuBarCrow", withExtension: "png"),
+            let image = NSImage(contentsOf: url)
+        else { return NSImage(systemSymbolName: "mic", accessibilityDescription: nil) }
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = true
+        return image
+    }()
+
+    private static func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {
+        NSImage(size: image.size, flipped: false) { rect in
+            image.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
     }
 
     @objc private func openSettings() {

@@ -89,6 +89,7 @@ jobs:
           expected=$(printf '%s\n' \
             ./Squawk.app/Contents/Info.plist \
             ./Squawk.app/Contents/MacOS/Squawk \
+            ./Squawk.app/Contents/Resources/MenuBarCrow.png \
             ./Squawk.app/Contents/Resources/Squawk.icns \
             ./Squawk.app/Contents/_CodeSignature/CodeResources | sort)
           if [ "$files" != "$expected" ]; then

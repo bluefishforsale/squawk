@@ -29,6 +29,7 @@ rm -rf dist
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/arm64-apple-macosx/release/Squawk "$app/Contents/MacOS/Squawk"
 cp packaging/Squawk.icns "$app/Contents/Resources/Squawk.icns"
+cp packaging/MenuBarCrow.png "$app/Contents/Resources/MenuBarCrow.png"
 sed "s/__VERSION__/$version/g" packaging/Info.plist > "$app/Contents/Info.plist"
 
 # FluidAudio's SwiftPM resource bundle is left out: it only holds text-to-speech
