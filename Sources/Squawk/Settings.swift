@@ -13,6 +13,7 @@ enum Preferences {
     static let rewriteLikeKey = "rewriteLike"
     static let spaceAfterPunctuationKey = "spaceAfterPunctuation"
     static let endWithPeriodKey = "endWithPeriod"
+    static let playSoundsKey = "playSounds"
     static let replacementsKey = "replacements"
     static let unloadMinutesKey = "unloadMinutes"
 
@@ -25,6 +26,7 @@ enum Preferences {
             rewriteLikeKey: false,
             spaceAfterPunctuationKey: true,
             endWithPeriodKey: true,
+            playSoundsKey: true,
             unloadMinutesKey: 10,
         ])
     }
@@ -53,6 +55,10 @@ enum Preferences {
             replacements: Replacement.parse(defaults.string(forKey: replacementsKey) ?? ""))
     }
 
+    static var playSounds: Bool {
+        defaults.bool(forKey: playSoundsKey)
+    }
+
     /// Zero keeps the model loaded forever.
     static var unloadMinutes: Int {
         defaults.integer(forKey: unloadMinutesKey)
@@ -75,6 +81,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.rewriteLikeKey) private var rewriteLike = false
     @AppStorage(Preferences.spaceAfterPunctuationKey) private var spaceAfterPunctuation = true
     @AppStorage(Preferences.endWithPeriodKey) private var endWithPeriod = true
+    @AppStorage(Preferences.playSoundsKey) private var playSounds = true
     @AppStorage(Preferences.replacementsKey) private var replacements = ""
     @AppStorage(Preferences.unloadMinutesKey) private var unloadMinutes = 10
     @State private var binding = Preferences.binding
@@ -94,6 +101,7 @@ struct SettingsView: View {
                 }
                 Text("Hold to dictate. Double-tap to lock hands-free, tap again to stop.")
                     .font(.footnote).foregroundStyle(.secondary)
+                Toggle("Play a sound when listening starts and stops", isOn: $playSounds)
             }
             .onChange(of: binding) { _, new in Preferences.binding = new }
 
@@ -202,6 +210,7 @@ struct ShortcutRecorder: View {
 
     @State private var monitor: Any?
     @State private var held: UInt64 = 0
+    @State private var down: UInt64 = 0
     @State private var rejected = false
 
     var body: some View {
@@ -222,22 +231,29 @@ struct ShortcutRecorder: View {
 
     private func begin() {
         held = 0
+        down = 0
         rejected = false
         setLearning(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
-            let modifiers = UInt64(event.modifierFlags.rawValue) & ModifierKey.allMasks
             if event.type == .keyDown {
                 guard event.keyCode != 53 else {
                     end()
                     return nil
                 }
-                commit(KeyBinding(modifiers: modifiers, keyCode: event.keyCode, keyLabel: Self.label(for: event)))
-            } else if modifiers == 0, held != 0 {
+                // NOTE: use the modifiers seen going down, not the key event's
+                // own flags. macOS sets the fn flag on every F-key and arrow
+                // press, which once saved F16 as "fn + F16" and made it
+                // impossible to trigger.
+                commit(KeyBinding(modifiers: down, keyCode: event.keyCode, keyLabel: Self.label(for: event)))
+                return nil
+            }
+            down = UInt64(event.modifierFlags.rawValue) & ModifierKey.allMasks
+            if down == 0, held != 0 {
                 // Modifier-only shortcut: take the most keys that were down
                 // together, committed when the last one is released.
                 commit(KeyBinding(modifiers: held))
             } else {
-                held |= modifiers
+                held |= down
             }
             return nil
         }

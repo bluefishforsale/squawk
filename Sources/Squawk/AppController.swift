@@ -5,6 +5,11 @@ import AVFoundation
 import AppKit
 import SquawkCore
 import SwiftUI
+import os
+
+/// Read with: /usr/bin/log show --last 5m --predicate 'subsystem == "com.bluefishforsale.squawk"'
+/// Never logs what was said, only sizes and state changes.
+let log = Logger(subsystem: "com.bluefishforsale.squawk", category: "app")
 
 final class AppController: NSObject, NSApplicationDelegate {
     private enum Status {
@@ -20,6 +25,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let enabledItem = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled), keyEquivalent: "")
     private lazy var hotkeys = HotkeyMonitor(binding: Preferences.binding)
     private let recorder = Recorder()
+    private let overlay = ListeningOverlay()
     private let transcriber = Transcriber()
     private var gesture = HoldGesture()
     private var status = Status.preparing
@@ -44,6 +50,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
 
         hotkeys.onEdge = { [unowned self] edge in
+            if edge != .chord {
+                log.notice("shortcut edge: \(String(describing: edge), privacy: .public)")
+            }
             let now = ProcessInfo.processInfo.systemUptime
             switch edge {
             case .down: perform(gesture.keyDown(at: now))
@@ -52,6 +61,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
         }
         hotkeys.onUserInput = { [unowned self] in continuingIn = nil }
+        recorder.onLevel = { [overlay] rms in overlay.history.push(rms: rms) }
         NotificationCenter.default.addObserver(
             self, selector: #selector(preferencesChanged), name: UserDefaults.didChangeNotification, object: nil)
         preferencesChanged()
@@ -84,7 +94,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// The tap cannot be created until Accessibility is granted, and macOS
     /// sends no notification when that happens, so poll.
     private func installHotkeyTap() {
-        guard !hotkeys.start() else { return show(.idle) }
+        guard !hotkeys.start() else {
+            log.notice("event tap installed, trusted=\(AXIsProcessTrusted(), privacy: .public)")
+            return show(.idle)
+        }
+        log.notice("event tap refused, trusted=\(AXIsProcessTrusted(), privacy: .public)")
         show(.problem("Grant Accessibility in System Settings, Privacy & Security"))
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.installHotkeyTap() }
     }
@@ -104,6 +118,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard paused else { return }
         // Whatever was in flight when dictation was switched off is dropped.
         recorder.cancel()
+        overlay.hide()
         gesture = HoldGesture()
         if case .recording = status { show(.idle) }
     }
@@ -113,6 +128,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func perform(_ action: HoldGesture.Action?) {
+        if let action {
+            log.notice("gesture: \(String(describing: action), privacy: .public)")
+        }
         switch action {
         case .start:
             flushPendingFinish()
@@ -122,17 +140,22 @@ final class AppController: NSObject, NSApplicationDelegate {
                 return show(.problem("Microphone: \(error.localizedDescription)"))
             }
             show(.recording)
+            overlay.show()
+            playSound("Tink")
             unloadTimer?.invalidate()
             // Warm the models while the user is still talking.
             Task { try? await transcriber.prepare(names: Preferences.names) }
         case .discard:
             recorder.cancel()
+            overlay.hide()
             show(.idle)
             scheduleUnload()
         case .finish:
             // Keep listening a moment past key release: people let go on the
             // last syllable, and the tail of that word is still in the air.
             show(.working)
+            overlay.hide()
+            playSound("Pop")
             let work = DispatchWorkItem { [unowned self] in
                 pendingFinish = nil
                 finish()
@@ -142,6 +165,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         case nil:
             break
         }
+    }
+
+    private func playSound(_ name: String) {
+        guard Preferences.playSounds else { return }
+        NSSound(named: name)?.play()
     }
 
     private func flushPendingFinish() {
@@ -157,6 +185,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         } catch {
             return show(.problem("Audio: \(error.localizedDescription)"))
         }
+        log.notice("recorded \(samples.count, privacy: .public) samples at 16 kHz")
         guard samples.count >= Transcriber.minimumSamples else {
             show(.idle)
             return scheduleUnload()
@@ -168,6 +197,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             do {
                 let output = try await transcriber.transcribe(samples, names: names)
                 let text = cleanup.apply(output.text)
+                log.notice("transcribed \(output.text.count, privacy: .public) characters, pasting \(text.count, privacy: .public)")
                 if !text.isEmpty {
                     TextInserter.paste(text, leadingSpace: cleanup.spaceAfterPunctuation && needsLeadingSpace(text))
                     continuingIn = NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -221,6 +251,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func show(_ status: Status) {
+        if case .problem(let message) = status {
+            log.error("problem: \(message, privacy: .public)")
+        }
         self.status = status
         let enabled = Preferences.isEnabled
         enabledItem.state = enabled ? .on : .off

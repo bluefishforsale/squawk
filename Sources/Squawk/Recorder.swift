@@ -6,6 +6,10 @@ import FluidAudio
 import os
 
 final class Recorder {
+    /// Called on the main queue with the RMS amplitude of each captured
+    /// buffer, for the level meter.
+    var onLevel: (Float) -> Void = { _ in }
+
     private var engine: AVAudioEngine?
     private var sampleRate = 0.0
     private let captured = OSAllocatedUnfairLock(initialState: [Float]())
@@ -18,10 +22,13 @@ final class Recorder {
         let format = engine.inputNode.outputFormat(forBus: 0)
         sampleRate = format.sampleRate
         let captured = captured
+        let onLevel = onLevel
         engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             guard let channel = buffer.floatChannelData?[0] else { return }
             let chunk = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             captured.withLock { $0.append(contentsOf: chunk) }
+            let rms = (chunk.reduce(0) { $0 + $1 * $1 } / Float(max(chunk.count, 1))).squareRoot()
+            DispatchQueue.main.async { onLevel(rms) }
         }
         try engine.start()
         self.engine = engine
