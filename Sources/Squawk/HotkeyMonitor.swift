@@ -1,63 +1,47 @@
-// Watches one modifier key system-wide through a listen-only event tap. It
-// never consumes or rewrites events, so a crash here cannot eat keystrokes.
+// Watches the dictation shortcut system-wide through an event tap. The only
+// event it ever withholds from other apps is the shortcut's own non-modifier
+// key while the shortcut is held; everything else passes through untouched.
 
 import CoreGraphics
 import Foundation
-
-enum Hotkey: String, CaseIterable, Identifiable {
-    case rightOption
-    case rightCommand
-    case fn
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .rightOption: "Right Option"
-        case .rightCommand: "Right Command"
-        case .fn: "Fn / Globe"
-        }
-    }
-
-    var keyCode: Int64 {
-        switch self {
-        case .rightOption: 61
-        case .rightCommand: 54
-        case .fn: 63
-        }
-    }
-
-    /// Device-dependent bits from IOLLEvent.h (NX_DEVICERALTKEYMASK and
-    /// friends). The generic Option and Command masks cannot tell left from right.
-    var flagMask: UInt64 {
-        switch self {
-        case .rightOption: 0x40
-        case .rightCommand: 0x10
-        case .fn: 0x80_0000
-        }
-    }
-}
+import SquawkCore
 
 final class HotkeyMonitor {
-    var onHotkeyDown: () -> Void = {}
-    var onHotkeyUp: () -> Void = {}
-    var onOtherKeyDown: () -> Void = {}
+    var onEdge: (BindingTracker.Edge) -> Void = { _ in }
 
+    /// Paused while dictation is disabled and while settings is learning a new
+    /// shortcut, so pressing candidate keys does not start a recording.
+    var isPaused = false {
+        didSet { tracker.reset() }
+    }
+
+    var binding: KeyBinding {
+        get { tracker.binding }
+        set {
+            guard newValue != tracker.binding else { return }
+            tracker.binding = newValue
+        }
+    }
+
+    private var tracker: BindingTracker
     private var tap: CFMachPort?
-    private var isDown = false
+
+    init(binding: KeyBinding) {
+        tracker = BindingTracker(binding: binding)
+    }
 
     /// Fails until the user grants Accessibility; call again after they do.
     func start() -> Bool {
         guard tap == nil else { return true }
-        let events = CGEventMask(1 << CGEventType.flagsChanged.rawValue | 1 << CGEventType.keyDown.rawValue)
+        let types: [CGEventType] = [.flagsChanged, .keyDown, .keyUp]
+        let events = types.reduce(CGEventMask(0)) { $0 | 1 << $1.rawValue }
         let callback: CGEventTapCallBack = { _, type, event, context in
             let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(context!).takeUnretainedValue()
-            monitor.handle(type, event)
-            return Unmanaged.passUnretained(event)
+            return monitor.handle(type, event) ? nil : Unmanaged.passUnretained(event)
         }
         guard
             let tap = CGEvent.tapCreate(
-                tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+                tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                 eventsOfInterest: events, callback: callback,
                 userInfo: Unmanaged.passUnretained(self).toOpaque())
         else { return false }
@@ -66,21 +50,28 @@ final class HotkeyMonitor {
         return true
     }
 
-    private func handle(_ type: CGEventType, _ event: CGEvent) {
-        switch type {
-        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+    /// Returns true when the event should be swallowed.
+    private func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-        case .keyDown:
-            onOtherKeyDown()
-        case .flagsChanged:
-            let hotkey = Preferences.hotkey
-            guard event.getIntegerValueField(.keyboardEventKeycode) == hotkey.keyCode else { return }
-            let down = event.flags.rawValue & hotkey.flagMask != 0
-            guard down != isDown else { return }
-            isDown = down
-            down ? onHotkeyDown() : onHotkeyUp()
-        default:
-            break
+            return false
         }
+        guard !isPaused else { return false }
+
+        let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        let edges: [BindingTracker.Edge]
+        var swallow = false
+        switch type {
+        case .flagsChanged:
+            edges = tracker.modifiersChanged(event.flags.rawValue)
+        case .keyDown:
+            (edges, swallow) = tracker.keyDown(code)
+        case .keyUp:
+            (edges, swallow) = tracker.keyUp(code)
+        default:
+            return false
+        }
+        edges.forEach(onEdge)
+        return swallow
     }
 }

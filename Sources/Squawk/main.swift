@@ -1,18 +1,31 @@
 // Entry point. Normally a menu-bar app; `--transcribe <audio file>` runs one
 // file through the same model path and exits, which is how CI and the memory
-// benchmark exercise Parakeet without microphone or accessibility grants.
+// benchmark exercise the models without microphone or accessibility grants.
+// Add `--name "Terrac=terek,tarik"` (repeatable) to test name correction.
 
 import AppKit
 import FluidAudio
+import SquawkCore
 
-if let flag = CommandLine.arguments.firstIndex(of: "--transcribe"),
-    CommandLine.arguments.count > flag + 1
-{
-    let path = CommandLine.arguments[flag + 1]
+let arguments = CommandLine.arguments
+
+func values(after flag: String) -> [String] {
+    arguments.indices.dropLast().filter { arguments[$0] == flag }.map { arguments[$0 + 1] }
+}
+
+if let path = values(after: "--transcribe").first {
+    let names = values(after: "--name").map { spec in
+        let parts = spec.split(separator: "=", maxSplits: 1).map(String.init)
+        return NameEntry(text: parts[0], soundsLike: parts.count > 1 ? parts[1] : "")
+    }
     Task {
         do {
             let samples = try AudioConverter().resampleAudioFile(URL(fileURLWithPath: path))
-            print(try await Transcriber().transcribe(samples))
+            let output = try await Transcriber().transcribe(samples, names: names)
+            if let warning = output.warning {
+                FileHandle.standardError.write(Data("squawk: \(warning)\n".utf8))
+            }
+            print(output.text)
             exit(0)
         } catch {
             FileHandle.standardError.write(Data("squawk: \(path): \(error.localizedDescription)\n".utf8))

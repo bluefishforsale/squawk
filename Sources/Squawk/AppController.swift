@@ -1,4 +1,4 @@
-// Wires hotkey, recorder, model and paste together and owns the menu-bar
+// Wires shortcut, recorder, models and paste together and owns the menu-bar
 // item, which is the app's only permanent UI.
 
 import AVFoundation
@@ -17,10 +17,13 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let hotkeys = HotkeyMonitor()
+    private let enabledItem = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled), keyEquivalent: "")
+    private lazy var hotkeys = HotkeyMonitor(binding: Preferences.binding)
     private let recorder = Recorder()
     private let transcriber = Transcriber()
     private var gesture = HoldGesture()
+    private var status = Status.preparing
+    private var isLearningShortcut = false
     private var unloadTimer: Timer?
     private var settingsWindow: NSWindow?
 
@@ -30,14 +33,23 @@ final class AppController: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(statusLine)
         menu.addItem(.separator())
+        enabledItem.target = self
+        menu.addItem(enabledItem)
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Quit Squawk", action: #selector(NSApplication.terminate), keyEquivalent: "q")
         statusItem.menu = menu
-        show(.idle)
 
-        hotkeys.onHotkeyDown = { [unowned self] in perform(gesture.keyDown(at: ProcessInfo.processInfo.systemUptime)) }
-        hotkeys.onHotkeyUp = { [unowned self] in perform(gesture.keyUp(at: ProcessInfo.processInfo.systemUptime)) }
-        hotkeys.onOtherKeyDown = { [unowned self] in perform(gesture.otherKeyDown()) }
+        hotkeys.onEdge = { [unowned self] edge in
+            let now = ProcessInfo.processInfo.systemUptime
+            switch edge {
+            case .down: perform(gesture.keyDown(at: now))
+            case .up: perform(gesture.keyUp(at: now))
+            case .chord: perform(gesture.otherKeyDown())
+            }
+        }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(preferencesChanged), name: UserDefaults.didChangeNotification, object: nil)
+        preferencesChanged()
 
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -53,7 +65,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         show(.preparing)
         Task { @MainActor in
             do {
-                try await transcriber.prepare()
+                try await transcriber.prepare(names: Preferences.names)
                 installHotkeyTap()
             } catch {
                 // Still install the tap: the next key press retries the load.
@@ -72,6 +84,29 @@ final class AppController: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.installHotkeyTap() }
     }
 
+    @objc private func preferencesChanged() {
+        DispatchQueue.main.async { [self] in
+            hotkeys.binding = Preferences.binding
+            applyPause()
+            show(status)
+        }
+    }
+
+    private func applyPause() {
+        let paused = !Preferences.isEnabled || isLearningShortcut
+        guard paused != hotkeys.isPaused else { return }
+        hotkeys.isPaused = paused
+        guard paused else { return }
+        // Whatever was in flight when dictation was switched off is dropped.
+        recorder.cancel()
+        gesture = HoldGesture()
+        if case .recording = status { show(.idle) }
+    }
+
+    @objc private func toggleEnabled() {
+        Preferences.isEnabled.toggle()
+    }
+
     private func perform(_ action: HoldGesture.Action?) {
         switch action {
         case .start:
@@ -82,8 +117,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             show(.recording)
             unloadTimer?.invalidate()
-            // Warm the model while the user is still talking.
-            Task { try? await transcriber.prepare() }
+            // Warm the models while the user is still talking.
+            Task { try? await transcriber.prepare(names: Preferences.names) }
         case .discard:
             recorder.cancel()
             show(.idle)
@@ -108,17 +143,39 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         show(.working)
         let cleanup = Preferences.cleanup
+        let names = Preferences.names
         Task { @MainActor in
             do {
-                let text = cleanup.apply(try await transcriber.transcribe(samples))
+                let output = try await transcriber.transcribe(samples, names: names)
+                let text = cleanup.apply(output.text)
                 if !text.isEmpty {
-                    TextInserter.paste(text + " ")
+                    // The trailing space keeps back-to-back dictations from
+                    // running together as "one.Two".
+                    TextInserter.paste(cleanup.spaceAfterPunctuation ? text + " " : text)
                 }
-                show(.idle)
+                show(output.warning.map(Status.problem) ?? .idle)
             } catch {
                 show(.problem("Transcription: \(error.localizedDescription)"))
             }
             scheduleUnload()
+        }
+    }
+
+    /// Settings' Train button: listen briefly and report what the recognizer
+    /// wrote, with name correction off so the raw mishearing comes back.
+    private func hear() async -> String? {
+        do {
+            try recorder.start()
+            try await Task.sleep(for: .seconds(2.5))
+            let samples = try recorder.stop()
+            guard samples.count >= Transcriber.minimumSamples else { return nil }
+            let heard = try await transcriber.transcribe(samples).text
+            scheduleUnload()
+            return heard
+        } catch {
+            recorder.cancel()
+            show(.problem("Training: \(error.localizedDescription)"))
+            return nil
         }
     }
 
@@ -132,20 +189,25 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func show(_ status: Status) {
+        self.status = status
+        let enabled = Preferences.isEnabled
+        enabledItem.state = enabled ? .on : .off
+
         let symbol: String
-        let tint: NSColor?
+        var tint: NSColor?
         switch status {
         case .preparing:
-            (symbol, tint) = ("arrow.down.circle", nil)
+            symbol = "arrow.down.circle"
             statusLine.title = "Preparing speech model…"
         case .idle:
-            (symbol, tint) = ("mic", nil)
-            statusLine.title = "Hold \(Preferences.hotkey.label) to dictate"
+            symbol = enabled ? "mic" : "mic.slash"
+            statusLine.title =
+                enabled ? "Hold \(Preferences.binding.keycaps.joined(separator: " + ")) to dictate" : "Dictation is off"
         case .recording:
             (symbol, tint) = ("mic.fill", .systemRed)
             statusLine.title = "Listening…"
         case .working:
-            (symbol, tint) = ("ellipsis", nil)
+            symbol = "ellipsis"
             statusLine.title = "Transcribing…"
         case .problem(let message):
             (symbol, tint) = ("exclamationmark.triangle", .systemYellow)
@@ -157,7 +219,13 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
+            let view = SettingsView(
+                setLearning: { [unowned self] learning in
+                    isLearningShortcut = learning
+                    applyPause()
+                },
+                hear: { [unowned self] in await hear() })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "Squawk"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false

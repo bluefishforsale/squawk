@@ -19,14 +19,31 @@ the menu bar and that is the entire interface.
 Hold Right Option and speak; release to paste. Double-tap the key to lock
 recording hands-free and tap once more to stop. If you press another key while
 holding it, Squawk assumes you meant a keyboard shortcut and throws the
-recording away. Settings lets you pick a different key, turn filler-word
-removal off, add `spoken => written` replacements for names and jargon, and
-choose how long the model stays in memory after you stop talking.
+recording away. The menu has an Enabled switch for when you want the key back.
+
+To change the key, click the keycaps in Settings and press what you want: one
+modifier, several held together, or modifiers plus an ordinary key. Left and
+right modifiers count as different keys. A bare letter is refused, since it
+would stop you typing that letter; F-keys are fine on their own.
+
+Squawk pastes what you said, minus the noise. Um and uh go, stuttered words
+collapse, and spacing after punctuation is fixed. An optional setting drops
+filler "like" and turns "she was like," into "she said,". None of it rephrases:
+there is no language model rewriting your sentences, only rules that each need
+a clear signal before they fire. `spoken => written` replacements cover jargon.
+
+Names get their own treatment, because that is where recognition fails most.
+Add a name in Settings with the spellings it comes out as ("Terrac", sounds
+like "terek, tarik"), or click Train and say it, and Squawk adds whatever it
+heard. From then on, whenever a transcript contains something resembling the
+name, a second small model re-listens to that stretch of audio and decides
+between the two. A real Derek or a real terrace stays as it is.
 
 The first launch downloads the Parakeet model (about 470 MB) from Hugging Face
-into `~/Library/Application Support/FluidAudio`. That is the only network
-request the app ever makes. After it, Squawk sets FluidAudio's offline mode on
-every launch. The first launch of each new version also spends about half a
+into `~/Library/Application Support/FluidAudio`, and adding your first name
+downloads a 100 MB companion model the same way. Those are the only network
+requests the app ever makes. Otherwise Squawk runs with FluidAudio's offline
+mode on. The first launch of each new version also spends about half a
 minute compiling the model for the Neural Engine, shown as "Preparing speech
 model" in the menu; after that a load takes a fraction of a second.
 
@@ -47,6 +64,7 @@ To run a file through the same model path without the UI, which is handy for
 checking memory and speed:
 
     /usr/bin/time -l dist/Squawk.app/Contents/MacOS/Squawk --transcribe sample.wav
+    dist/Squawk.app/Contents/MacOS/Squawk --transcribe sample.wav --name "Terrac=terek,tarik"
 
 ## License
 
