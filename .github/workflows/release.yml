@@ -1,60 +1,166 @@
 name: release
 
-# Pushing a tag like v0.1.0 builds, signs with Developer ID, notarizes and
-# publishes the DMG as a GitHub release. Backing a release out is deleting the
-# release and the tag; nothing auto-updates from it.
+# A v* tag builds the app, signs it with Developer ID, notarizes it and
+# publishes the DMG. Same layout as gemdigger and signal-agent: every job that
+# touches a signing secret runs in the `release` environment, which only v*
+# tags can deploy to, so pull requests never see the keys. Backing a release out
+# is deleting the release and the tag; nothing auto-updates from it.
+
 on:
   push:
-    tags: ["v*"]
+    tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  check:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - name: every signing input is present
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: scripts/check-release-secrets.sh
+
+  build:
+    needs: check
+    # macos-15 is an Apple Silicon runner, the only architecture Squawk ships for.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - run: swift test
-
-      - name: Import Developer ID certificate
+      - name: build the unsigned app
         env:
-          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          SIGN_IDENTITY: '-'
+          TAG: ${{ github.ref_name }}
         run: |
-          keychain="$RUNNER_TEMP/signing.keychain-db"
-          keychain_password="$(uuidgen)"
-          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 3600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" \
-            -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          rm "$RUNNER_TEMP/cert.p12"
+          VERSION="${TAG#v}" scripts/bundle.sh
+          ditto -c -k --keepParent dist/Squawk.app dist/unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-unsigned
+          path: dist/unsigned.zip
+          if-no-files-found: error
 
-      - name: Build and sign
+  sign:
+    needs: build
+    runs-on: macos-15
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      # NOTE: the keychain is set up from trusted repo scripts *before* the build
+      # artifact arrives, and the artifact is unpacked outside the workspace, so a
+      # poisoned build can't overwrite a script that later runs beside the key.
+      - name: signing keychain and notarization key
         env:
-          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: scripts/macos-signing-setup.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-unsigned
+          path: ${{ runner.temp }}/artifact
+      - name: unpack and check the unsigned app
         run: |
-          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          VERSION="${GITHUB_REF_NAME#v}" scripts/bundle.sh
-
-      - name: Notarize and staple
+          zip="$RUNNER_TEMP/artifact/unsigned.zip"
+          out="$RUNNER_TEMP/unsigned"
+          # Refuse traversal before anything is written.
+          if zipinfo -1 "$zip" | grep -E '(^/|(^|/)\.\.(/|$))'; then
+            echo "::error::artifact has absolute or .. paths"; exit 1
+          fi
+          mkdir "$out"
+          ditto -x -k "$zip" "$out"
+          if [ -n "$(find "$out" -type l)" ]; then
+            echo "::error::artifact contains symlinks"; exit 1
+          fi
+          files=$(cd "$out" && find . -type f | sort)
+          expected=$(printf '%s\n' \
+            ./Squawk.app/Contents/Info.plist \
+            ./Squawk.app/Contents/MacOS/Squawk \
+            ./Squawk.app/Contents/Resources/Squawk.icns \
+            ./Squawk.app/Contents/_CodeSignature/CodeResources | sort)
+          if [ "$files" != "$expected" ]; then
+            echo "::error::unexpected files in artifact:"; echo "$files"; exit 1
+          fi
+      - name: sign, notarize and staple the app
         env:
-          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
-          echo "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
-          xcrun notarytool submit "dist/Squawk-$VERSION.dmg" --wait \
-            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID"
-          rm "$RUNNER_TEMP/notary.p8"
-          xcrun stapler staple "dist/Squawk-$VERSION.dmg"
-          spctl --assess --type open --context context:primary-signature --verbose=2 "dist/Squawk-$VERSION.dmg"
-
-      - name: Publish
+          app="$RUNNER_TEMP/unsigned/Squawk.app"
+          # Notarization requires the hardened runtime and a secure timestamp.
+          # The entitlements come from the checkout, not the artifact.
+          codesign --force --options runtime --timestamp \
+            --entitlements packaging/Squawk.entitlements --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+          # Stapling fails unless Apple accepted it, so a rejected build stops here.
+          xcrun stapler staple "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+      - name: build, sign, notarize and staple the DMG
         env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The window that opens shows the app beside an Applications shortcut: drag to install.
+          stage="$RUNNER_TEMP/dmg"
+          mkdir "$stage"
+          ditto "$RUNNER_TEMP/unsigned/Squawk.app" "$stage/Squawk.app"
+          ln -s /Applications "$stage/Applications"
+          mkdir -p "$RUNNER_TEMP/signed"
+          dmg="$RUNNER_TEMP/signed/Squawk-${TAG#v}.dmg"
+          hdiutil create -volname Squawk -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+          # The app inside already carries its own ticket; the DMG gets one too so
+          # Gatekeeper is satisfied offline whichever one it checks.
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
+          xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+      - name: remove the signing keychain
+        if: always()
+        run: scripts/macos-signing-cleanup.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: ${{ runner.temp }}/signed/*.dmg
+          if-no-files-found: error
+
+  publish:
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: dist
+      - run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "dist/Squawk-$VERSION.dmg" --generate-notes
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --verify-tag --generate-notes

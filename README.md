@@ -56,9 +56,25 @@ command line tools are enough, Xcode is not required.
     scripts/bundle.sh
     open dist/Squawk.app
 
-A local build is ad-hoc signed, so macOS treats each rebuild as a new app and
-asks for Accessibility again. Release builds are signed with a Developer ID and
-notarized by `.github/workflows/release.yml` when a `v*` tag is pushed.
+`scripts/bundle.sh` signs with the first Developer ID in your keychain, and
+falls back to an ad-hoc signature when there is none. The difference matters:
+macOS remembers the Accessibility and Microphone grants against the signing
+identity, so a Developer ID build keeps them across rebuilds and updates, and
+an ad-hoc build loses them every time.
+
+## Releasing
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the app
+in a job with no secrets, then signs, notarizes and staples it in the `release`
+environment and publishes the DMG. Only `v*` tags can deploy to that
+environment. It needs these secrets there, the same set and the same Apple
+identity that gemdigger and signal-agent use: `APPLE_CERTIFICATE`,
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_TEAM_ID`,
+`APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_PRIVATE_KEY`, and a random
+`KEYCHAIN_PASSWORD`. A tag pushed while any is missing fails at the first job,
+before anything is built.
+
+Pull request builds are ad-hoc signed and are for testing only.
 
 To run a file through the same model path without the UI, which is handy for
 checking memory and speed:
