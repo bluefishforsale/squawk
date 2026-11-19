@@ -1,0 +1,7 @@
+.build/
+.worktrees/
+.envrc
+dist/
+*.xcodeproj
+.swiftpm/
+.DS_Store
