@@ -116,10 +116,7 @@ struct PanelView: View {
     @AppStorage(Preferences.replacementsKey) private var replacements = ""
     @AppStorage(Preferences.unloadMinutesKey) private var unloadMinutes = 10
     @AppStorage(Preferences.checkForUpdatesKey) private var checkForUpdates = true
-    @AppStorage("panel.cleanup") private var showCleanup = true
-    @AppStorage("panel.names") private var showNames = false
-    @AppStorage("panel.replacements") private var showReplacements = false
-    @AppStorage("panel.general") private var showGeneral = false
+    @AppStorage("panel.pane") private var pane = Pane.dictation
     @State private var binding = Preferences.binding
     @State private var names = Preferences.names
     @State private var trainingName: UUID?
@@ -130,8 +127,69 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if let update = model.update { updateBanner(update) }
+            paneButtons
 
-            Card {
+            switch pane {
+            case .dictation: dictationPane
+            case .cleanup: cleanupPane
+            case .names: namesPane
+            case .replacements: replacementsPane
+            case .general: generalPane
+            }
+
+            HStack {
+                Text("Squawk \(Updater.currentVersion?.description ?? "")")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    NSApp.terminate(nil)
+                } label: {
+                    Label("Quit", systemImage: "power")
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: binding) { _, new in Preferences.binding = new }
+        .onChange(of: names) { _, new in Preferences.names = new }
+    }
+
+    /// One icon per pane across the top; the panel shows one pane at a time.
+    private var paneButtons: some View {
+        HStack(spacing: 6) {
+            ForEach(Pane.allCases) { candidate in
+                Button {
+                    pane = candidate
+                } label: {
+                    Image(systemName: candidate.symbol)
+                        .font(.system(size: 14))
+                        .frame(maxWidth: .infinity, minHeight: 28)
+                        .foregroundStyle(pane == candidate ? Color.accentColor : Color.secondary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(Color.primary.opacity(pane == candidate ? 0.12 : 0.05)))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(Color.accentColor.opacity(pane == candidate ? 0.9 : 0), lineWidth: 1.5))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help(candidate.title)
+                .accessibilityLabel(candidate.title)
+            }
+        }
+    }
+
+    private func title(_ pane: Pane) -> some View {
+        Text(pane.title.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var dictationPane: some View {
+        title(.dictation)
+        Card {
                 Row("Dictation key") {
                     ShortcutRecorder(binding: $binding, setLearning: setLearning)
                     Switch(isOn: $enabled)
@@ -147,10 +205,11 @@ struct PanelView: View {
                     .help("Opening the microphone swallows the first word. Keeping it open avoids that; macOS shows its microphone indicator while it is open, and Bluetooth headsets drop to call quality.")
                 }
             }
-            .onChange(of: binding) { _, new in Preferences.binding = new }
+    }
 
-            Group(title: "Cleanup", isExpanded: $showCleanup) {
-                Card {
+    @ViewBuilder private var cleanupPane: some View {
+        title(.cleanup)
+        Card {
                     Row("Remove um, uh and stutters") { Switch(isOn: $removeFillers) }
                     Divider()
                     Row("Remove filler \"like\"") { Switch(isOn: $rewriteLike) }
@@ -160,11 +219,12 @@ struct PanelView: View {
                         .help("Also puts a space between one dictation and the next.")
                     Divider()
                     Row("End with a full stop") { Switch(isOn: $endWithPeriod) }
-                }
-            }
+        }
+    }
 
-            Group(title: "Names", isExpanded: $showNames, count: names.count) {
-                Card {
+    @ViewBuilder private var namesPane: some View {
+        title(.names)
+        Card {
                     ForEach($names) { $entry in
                         HStack(spacing: 6) {
                             TextField("Name", text: $entry.text).frame(width: 80)
@@ -186,20 +246,21 @@ struct PanelView: View {
                 }
                 Text("Squawk re-listens to the audio whenever it hears a name or one of its sound-alikes.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-            .onChange(of: names) { _, new in Preferences.names = new }
+    }
 
-            Group(title: "Replacements", isExpanded: $showReplacements) {
+    @ViewBuilder private var replacementsPane: some View {
+        title(.replacements)
                 TextEditor(text: $replacements)
                     .font(.callout.monospaced())
                     .frame(height: 64)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 Text("One per line: spoken => written")
                     .font(.caption).foregroundStyle(.secondary)
-            }
+    }
 
-            Group(title: "General", isExpanded: $showGeneral) {
-                Card {
+    @ViewBuilder private var generalPane: some View {
+        title(.general)
+        Card {
                     Row("Free model memory after") {
                         Picker("", selection: $unloadMinutes) {
                             Text("1 minute idle").tag(1)
@@ -225,24 +286,7 @@ struct PanelView: View {
                     Divider()
                     Row("Check for updates daily") { Switch(isOn: $checkForUpdates) }
                         .help("Asks GitHub for the latest release. Nothing about you or this Mac is sent.")
-                }
-            }
-
-            HStack {
-                Text("Squawk \(Updater.currentVersion?.description ?? "")")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    NSApp.terminate(nil)
-                } label: {
-                    Label("Quit", systemImage: "power")
-                }
-                .controlSize(.small)
-            }
         }
-        .padding(14)
-        .frame(width: 360)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var header: some View {
@@ -337,32 +381,22 @@ private struct Switch: View {
     }
 }
 
-/// A titled section that folds away, so the panel stays short.
-private struct Group<Content: View>: View {
-    let title: String
-    @Binding var isExpanded: Bool
-    var count: Int?
-    @ViewBuilder let content: Content
+enum Pane: String, CaseIterable, Identifiable {
+    case dictation, cleanup, names, replacements, general
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                isExpanded.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2.weight(.bold)).frame(width: 10)
-                    Text(title.uppercased()).font(.caption.weight(.semibold))
-                    Spacer()
-                    if let count, count > 0 {
-                        Text("\(count)").font(.caption).foregroundStyle(Color.accentColor)
-                    }
-                }
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if isExpanded { content }
+    var id: String { rawValue }
+
+    var title: String {
+        rawValue.capitalized
+    }
+
+    var symbol: String {
+        switch self {
+        case .dictation: "mic"
+        case .cleanup: "wand.and.stars"
+        case .names: "person.text.rectangle"
+        case .replacements: "arrow.left.arrow.right"
+        case .general: "gearshape"
         }
     }
 }
