@@ -20,9 +20,9 @@ enum MicrophoneReadiness: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .onDemand: "Only while the key is held (clips the first word)"
-        case .warm: "For 30 seconds after each dictation"
-        case .always: "Always (never clips, mic indicator stays on)"
+        case .onDemand: "Only while held"
+        case .warm: "30 s after use"
+        case .always: "Always"
         }
     }
 }

@@ -13,15 +13,17 @@ megabytes and drops its model from memory when you stop talking for a while.
 
 Download the DMG from the releases page, drag Squawk to Applications, and open
 it. macOS asks for two permissions: Microphone, to hear you, and Accessibility,
-to watch the dictation key and paste the result. A microphone icon appears in
-the menu bar and that is the entire interface.
+to watch the dictation key and paste the result. A crow appears in the menu
+bar. Click it for a panel with the status, the on/off switch and every
+setting; there is no other window.
 
 Hold Right Option and speak; release to paste. Double-tap the key to lock
 recording hands-free and tap once more to stop. If you press another key while
 holding it, Squawk assumes you meant a keyboard shortcut and throws the
-recording away. The menu has an Enabled switch for when you want the key back.
+recording away. The switch beside the key in the panel turns dictation off for
+when you want the key back.
 
-To change the key, click the keycaps in Settings and press what you want: one
+To change the key, click the keycaps in the panel and press what you want: one
 modifier, several held together, or modifiers plus an ordinary key. Left and
 right modifiers count as different keys. A bare letter is refused, since it
 would stop you typing that letter; F-keys are fine on their own.
@@ -33,7 +35,7 @@ there is no language model rewriting your sentences, only rules that each need
 a clear signal before they fire. `spoken => written` replacements cover jargon.
 
 Names get their own treatment, because that is where recognition fails most.
-Add a name in Settings with the spellings it comes out as ("Terrac", sounds
+Add a name in the panel with the spellings it comes out as ("Terrac", sounds
 like "terek, tarik"), or click Train and say it, and Squawk adds whatever it
 heard. From then on, whenever a transcript contains something resembling the
 name, a second small model re-listens to that stretch of audio and decides
@@ -41,11 +43,19 @@ between the two. A real Derek or a real terrace stays as it is.
 
 The first launch downloads the Parakeet model (about 470 MB) from Hugging Face
 into `~/Library/Application Support/FluidAudio`, and adding your first name
-downloads a 100 MB companion model the same way. Those are the only network
-requests the app ever makes. Otherwise Squawk runs with FluidAudio's offline
-mode on. The first launch of each new version also spends about half a
+downloads a 100 MB companion model the same way. The only other network
+request is the update check below. Nothing you say or type is ever part of
+one, and Squawk runs with FluidAudio's offline mode on. The first launch of each new version also spends about half a
 minute compiling the model for the Neural Engine, shown as "Preparing speech
 model" in the menu; after that a load takes a fraction of a second.
+
+Once a day Squawk asks GitHub whether a newer release exists: one anonymous
+request to the public releases feed, which you can switch off under General.
+When there is one, an orange dot appears beside the crow and the panel offers
+to update. Updating downloads the DMG, checks that it is signed by the same
+Developer ID team as the copy you are running, swaps the app in place and
+relaunches. A download that fails that check is not installed. Your
+Accessibility and Microphone grants carry over.
 
 ## Building
 

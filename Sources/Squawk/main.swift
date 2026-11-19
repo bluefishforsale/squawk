@@ -2,6 +2,8 @@
 // file through the same model path and exits, which is how CI and the memory
 // benchmark exercise the models without microphone or accessibility grants.
 // Add `--name "Terrac=terek,tarik"` (repeatable) to test name correction.
+// `--install-update <dmg file>` runs the self-update path against a local
+// disk image, with the same signature and version checks as a real update.
 
 import AppKit
 import FluidAudio
@@ -29,6 +31,19 @@ if let path = values(after: "--transcribe").first {
             exit(0)
         } catch {
             FileHandle.standardError.write(Data("squawk: \(path): \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
+if let path = values(after: "--install-update").first, let version = AppVersion("0") {
+    let file = URL(fileURLWithPath: path)
+    Task {
+        do {
+            try await Updater.install(AvailableUpdate(version: version, dmg: file, page: file))
+        } catch {
+            FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
     }

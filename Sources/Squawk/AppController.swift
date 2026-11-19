@@ -1,5 +1,5 @@
 // Wires shortcut, recorder, models and paste together and owns the menu-bar
-// item, which is the app's only permanent UI.
+// item and the panel that drops from it, which is all the UI there is.
 
 import AVFoundation
 import AppKit
@@ -20,9 +20,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         case problem(String)
     }
 
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let enabledItem = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled), keyEquivalent: "")
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let panel = PanelModel()
+    private let popover = NSPopover()
+    private var updateTimer: Timer?
     private lazy var hotkeys = HotkeyMonitor(binding: Preferences.binding)
     private let recorder = Recorder()
     private let overlay = ListeningOverlay()
@@ -37,19 +38,23 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// or clicks. While it is set, the cursor is still right after that text.
     private var continuingIn: pid_t?
     private var lastPasteAt: TimeInterval = 0
-    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Preferences.registerDefaults()
 
-        let menu = NSMenu()
-        menu.addItem(statusLine)
-        menu.addItem(.separator())
-        enabledItem.target = self
-        menu.addItem(enabledItem)
-        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
-        menu.addItem(withTitle: "Quit Squawk", action: #selector(NSApplication.terminate), keyEquivalent: "q")
-        statusItem.menu = menu
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePanel)
+        statusItem.button?.imagePosition = .imageLeading
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(
+            rootView: PanelView(
+                model: panel,
+                setLearning: { [unowned self] learning in
+                    isLearningShortcut = learning
+                    applyPause()
+                },
+                hear: { [unowned self] in await hear() },
+                installUpdate: { [unowned self] in installUpdate() }))
 
         hotkeys.onEdge = { [unowned self] edge in
             if edge != .chord {
@@ -86,6 +91,50 @@ final class AppController: NSObject, NSApplicationDelegate {
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(prompt)
         warmModel()
+
+        checkForUpdate()
+        updateTimer = .scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { [unowned self] _ in
+            checkForUpdate()
+        }
+    }
+
+    private func checkForUpdate() {
+        guard Preferences.checkForUpdates else { return }
+        Task { @MainActor in
+            do {
+                panel.update = try await Updater.check()
+                log.notice("update check: \(self.panel.update?.version.description ?? "none", privacy: .public)")
+            } catch {
+                // Offline is normal for this app; try again tomorrow.
+                log.notice("update check failed: \(error.localizedDescription, privacy: .public)")
+            }
+            show(status)
+        }
+    }
+
+    private func installUpdate() {
+        guard let update = panel.update, panel.updateProgress != .installing else { return }
+        panel.updateProgress = .installing
+        Task { @MainActor in
+            do {
+                try await Updater.install(update)
+            } catch {
+                log.error("update failed: \(error.localizedDescription, privacy: .public)")
+                panel.updateProgress = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    @objc private func togglePanel() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            return popover.performClose(nil)
+        }
+        // The panel has text fields and the shortcut recorder, which only get
+        // key presses if Squawk is the active app while it is open.
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     /// CoreML compiles the encoder for the Neural Engine the first time a given
@@ -124,6 +173,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             hotkeys.binding = Preferences.binding
             applyPause()
             recorder.setReadiness(Preferences.microphone, enabled: Preferences.isEnabled)
+            if !Preferences.checkForUpdates { panel.update = nil }
             show(status)
         }
     }
@@ -138,10 +188,6 @@ final class AppController: NSObject, NSApplicationDelegate {
         overlay.hide()
         gesture = HoldGesture()
         if case .recording = status { show(.idle) }
-    }
-
-    @objc private func toggleEnabled() {
-        Preferences.isEnabled.toggle()
     }
 
     private func perform(_ action: HoldGesture.Action?) {
@@ -297,34 +343,40 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         self.status = status
         let enabled = Preferences.isEnabled
-        enabledItem.state = enabled ? .on : .off
 
         // The crow is a template image, which macOS draws in whatever
         // contrasts with the menu bar, light or dark. It is dimmed when Squawk
         // is not listening for the key, and red while it is recording.
         var image = crow
         var dimmed = false
+        panel.isProblem = false
         switch status {
         case .preparing:
             dimmed = true
-            statusLine.title = "Preparing speech model…"
+            panel.status = "Preparing speech model…"
         case .idle:
             dimmed = !enabled
-            statusLine.title =
+            panel.status =
                 enabled ? "Hold \(Preferences.binding.keycaps.joined(separator: " + ")) to dictate" : "Dictation is off"
         case .recording:
             image = crow.map { Self.tinted($0, .systemRed) }
-            statusLine.title = "Listening…"
+            panel.status = "Listening…"
         case .working:
-            statusLine.title = "Transcribing…"
+            panel.status = "Transcribing…"
         case .problem(let message):
             image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(paletteColors: [.systemYellow]))
-            statusLine.title = message
+            panel.status = message
+            panel.isProblem = true
         }
-        image?.accessibilityDescription = statusLine.title
+        image?.accessibilityDescription = panel.status
         statusItem.button?.image = image
         statusItem.button?.appearsDisabled = dimmed
+        // An orange dot beside the crow is the whole update notice: it never
+        // interrupts, and the panel explains it.
+        statusItem.button?.attributedTitle = NSAttributedString(
+            string: panel.update == nil ? "" : "●",
+            attributes: [.foregroundColor: NSColor.systemOrange, .font: NSFont.systemFont(ofSize: 7)])
     }
 
     private lazy var crow: NSImage? = {
@@ -344,24 +396,5 @@ final class AppController: NSObject, NSApplicationDelegate {
             rect.fill(using: .sourceAtop)
             return true
         }
-    }
-
-    @objc private func openSettings() {
-        if settingsWindow == nil {
-            let view = SettingsView(
-                setLearning: { [unowned self] learning in
-                    isLearningShortcut = learning
-                    applyPause()
-                },
-                hear: { [unowned self] in await hear() })
-            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-            window.title = "Squawk"
-            window.styleMask = [.titled, .closable]
-            window.isReleasedWhenClosed = false
-            settingsWindow = window
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.center()
-        settingsWindow?.makeKeyAndOrderFront(nil)
     }
 }

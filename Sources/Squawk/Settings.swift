@@ -1,5 +1,5 @@
-// The whole settings surface. Anything that would need a second pane does not
-// belong in this app.
+// Stored preferences, and the panel under the menu bar icon that edits them.
+// Anything that would need a second pane does not belong in this app.
 
 import ServiceManagement
 import SquawkCore
@@ -17,6 +17,7 @@ enum Preferences {
     static let microphoneKey = "microphone"
     static let replacementsKey = "replacements"
     static let unloadMinutesKey = "unloadMinutes"
+    static let checkForUpdatesKey = "checkForUpdates"
 
     private static var defaults: UserDefaults { .standard }
 
@@ -30,6 +31,7 @@ enum Preferences {
             playSoundsKey: true,
             microphoneKey: MicrophoneReadiness.warm.rawValue,
             unloadMinutesKey: 10,
+            checkForUpdatesKey: true,
         ])
     }
 
@@ -70,17 +72,39 @@ enum Preferences {
         defaults.integer(forKey: unloadMinutesKey)
     }
 
+    static var checkForUpdates: Bool {
+        defaults.bool(forKey: checkForUpdatesKey)
+    }
+
     private static func decoded<Value: Decodable>(_ key: String) -> Value? {
         defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Value.self, from: $0) }
     }
 }
 
-struct SettingsView: View {
+/// What the panel shows that is not a stored preference.
+final class PanelModel: ObservableObject {
+    enum UpdateProgress: Equatable {
+        case idle
+        case installing
+        case failed(String)
+    }
+
+    @Published var status = ""
+    @Published var isProblem = false
+    @Published var update: AvailableUpdate?
+    @Published var updateProgress = UpdateProgress.idle
+}
+
+/// Everything Squawk has to show, in the one panel that drops from the menu
+/// bar icon. There is no settings window.
+struct PanelView: View {
+    @ObservedObject var model: PanelModel
     /// Pauses the global shortcut while a new one is being learned.
     let setLearning: (Bool) -> Void
     /// Records a couple of seconds and returns what the recognizer heard,
     /// without name correction, for training a name.
     let hear: () async -> String?
+    let installUpdate: () -> Void
 
     @AppStorage(Preferences.enabledKey) private var enabled = true
     @AppStorage(Preferences.removeFillersKey) private var removeFillers = true
@@ -91,6 +115,11 @@ struct SettingsView: View {
     @AppStorage(Preferences.microphoneKey) private var microphone = MicrophoneReadiness.warm
     @AppStorage(Preferences.replacementsKey) private var replacements = ""
     @AppStorage(Preferences.unloadMinutesKey) private var unloadMinutes = 10
+    @AppStorage(Preferences.checkForUpdatesKey) private var checkForUpdates = true
+    @AppStorage("panel.cleanup") private var showCleanup = true
+    @AppStorage("panel.names") private var showNames = false
+    @AppStorage("panel.replacements") private var showReplacements = false
+    @AppStorage("panel.general") private var showGeneral = false
     @State private var binding = Preferences.binding
     @State private var names = Preferences.names
     @State private var trainingName: UUID?
@@ -98,88 +127,162 @@ struct SettingsView: View {
     @State private var loginError: String?
 
     var body: some View {
-        Form {
-            Section {
-                HStack {
-                    Text("Dictation key")
-                    Spacer()
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            if let update = model.update { updateBanner(update) }
+
+            Card {
+                Row("Dictation key") {
                     ShortcutRecorder(binding: $binding, setLearning: setLearning)
-                    Toggle("Enabled", isOn: $enabled).labelsHidden()
+                    Switch(isOn: $enabled)
                 }
-                Text("Hold to dictate. Double-tap to lock hands-free, tap again to stop.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                Toggle("Play a sound when listening starts and stops", isOn: $playSounds)
-                Picker("Keep microphone open", selection: $microphone) {
-                    ForEach(MicrophoneReadiness.allCases) { Text($0.label).tag($0) }
+                Divider()
+                Row("Sounds on start and stop") { Switch(isOn: $playSounds) }
+                Divider()
+                Row("Keep microphone open") {
+                    Picker("", selection: $microphone) {
+                        ForEach(MicrophoneReadiness.allCases) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden().controlSize(.small).fixedSize()
+                    .help("Opening the microphone swallows the first word. Keeping it open avoids that; macOS shows its microphone indicator while it is open, and Bluetooth headsets drop to call quality.")
                 }
-                Text("Opening the microphone takes a moment and swallows the first word. Keeping it open avoids that; macOS shows its microphone indicator while it is open, and Bluetooth headsets drop to call quality.")
-                    .font(.footnote).foregroundStyle(.secondary)
             }
             .onChange(of: binding) { _, new in Preferences.binding = new }
 
-            Section("Cleanup") {
-                Toggle("Remove um, uh and stuttered words", isOn: $removeFillers)
-                Toggle("Remove filler \"like\", and turn \"she was like\" into \"she said\"", isOn: $rewriteLike)
-                Toggle("Add a space after punctuation and between dictations", isOn: $spaceAfterPunctuation)
-                Toggle("End each dictation with a full stop if it has none", isOn: $endWithPeriod)
+            Group(title: "Cleanup", isExpanded: $showCleanup) {
+                Card {
+                    Row("Remove um, uh and stutters") { Switch(isOn: $removeFillers) }
+                    Divider()
+                    Row("Remove filler \"like\"") { Switch(isOn: $rewriteLike) }
+                        .help("Also turns \"she was like\" into \"she said\".")
+                    Divider()
+                    Row("Space after punctuation") { Switch(isOn: $spaceAfterPunctuation) }
+                        .help("Also puts a space between one dictation and the next.")
+                    Divider()
+                    Row("End with a full stop") { Switch(isOn: $endWithPeriod) }
+                }
             }
 
-            Section {
-                ForEach($names) { $entry in
-                    HStack {
-                        TextField("Name", text: $entry.text).frame(width: 110)
-                        TextField("Sounds like: terek, tarik", text: $entry.soundsLike)
-                        Button(trainingName == entry.id ? "Listening…" : "Train") { train(entry.id) }
-                            .disabled(trainingName != nil || entry.name.isEmpty)
-                            .help("Click, then say the name. What Squawk hears is added as a sound-alike.")
-                        Button {
-                            names.removeAll { $0.id == entry.id }
-                        } label: {
-                            Image(systemName: "minus.circle")
+            Group(title: "Names", isExpanded: $showNames, count: names.count) {
+                Card {
+                    ForEach($names) { $entry in
+                        HStack(spacing: 6) {
+                            TextField("Name", text: $entry.text).frame(width: 80)
+                            TextField("Sounds like: terek, tarik", text: $entry.soundsLike)
+                            Button(trainingName == entry.id ? "…" : "Train") { train(entry.id) }
+                                .disabled(trainingName != nil || entry.name.isEmpty)
+                                .help("Click, then say the name. What Squawk hears is added as a sound-alike.")
+                            Button {
+                                names.removeAll { $0.id == entry.id }
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless)
                         }
-                        .buttonStyle(.borderless)
+                        .textFieldStyle(.roundedBorder).controlSize(.small)
+                        Divider()
                     }
-                    .labelsHidden()
+                    Button("Add name") { names.append(NameEntry()) }.controlSize(.small)
                 }
-                Button("Add name") { names.append(NameEntry()) }
-            } header: {
-                Text("Names")
-            } footer: {
                 Text("Squawk re-listens to the audio whenever it hears a name or one of its sound-alikes.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary)
             }
             .onChange(of: names) { _, new in Preferences.names = new }
 
-            Section("Replacements, one per line: spoken => written") {
+            Group(title: "Replacements", isExpanded: $showReplacements) {
                 TextEditor(text: $replacements)
-                    .font(.body.monospaced())
-                    .frame(height: 70)
+                    .font(.callout.monospaced())
+                    .frame(height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Text("One per line: spoken => written")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section {
-                Picker("Free model memory after", selection: $unloadMinutes) {
-                    Text("1 minute idle").tag(1)
-                    Text("10 minutes idle").tag(10)
-                    Text("1 hour idle").tag(60)
-                    Text("Never").tag(0)
-                }
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, enabled in
-                        do {
-                            try enabled ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
-                            loginError = nil
-                        } catch {
-                            loginError = error.localizedDescription
+            Group(title: "General", isExpanded: $showGeneral) {
+                Card {
+                    Row("Free model memory after") {
+                        Picker("", selection: $unloadMinutes) {
+                            Text("1 minute idle").tag(1)
+                            Text("10 minutes idle").tag(10)
+                            Text("1 hour idle").tag(60)
+                            Text("Never").tag(0)
                         }
+                        .labelsHidden().controlSize(.small).fixedSize()
                     }
-                if let loginError {
-                    Text(loginError).font(.footnote).foregroundStyle(.red)
+                    Divider()
+                    Row("Launch at login") { Switch(isOn: $launchAtLogin) }
+                        .onChange(of: launchAtLogin) { _, enabled in
+                            do {
+                                try enabled ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
+                                loginError = nil
+                            } catch {
+                                loginError = error.localizedDescription
+                            }
+                        }
+                    if let loginError {
+                        Text(loginError).font(.caption).foregroundStyle(.red)
+                    }
+                    Divider()
+                    Row("Check for updates daily") { Switch(isOn: $checkForUpdates) }
+                        .help("Asks GitHub for the latest release. Nothing about you or this Mac is sent.")
+                }
+            }
+
+            HStack {
+                Text("Squawk \(Updater.currentVersion?.description ?? "")")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    NSApp.terminate(nil)
+                } label: {
+                    Label("Quit", systemImage: "power")
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable().frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Squawk").font(.headline)
+                Text(model.status)
+                    .font(.callout)
+                    .foregroundStyle(model.isProblem ? Color.orange : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func updateBanner(_ update: AvailableUpdate) -> some View {
+        Card {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Squawk \(update.version.description) is available").font(.callout.weight(.medium))
+                    switch model.updateProgress {
+                    case .idle:
+                        Link("Release notes", destination: update.page).font(.caption)
+                    case .installing:
+                        Text("Downloading and installing…").font(.caption).foregroundStyle(.secondary)
+                    case .failed(let message):
+                        Text(message).font(.caption).foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Link("Download it by hand", destination: update.page).font(.caption)
+                    }
+                }
+                Spacer()
+                if model.updateProgress == .installing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Update", action: installUpdate).controlSize(.small)
                 }
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 520)
-        .fixedSize()
     }
 
     private func train(_ id: UUID) {
@@ -190,6 +293,76 @@ struct SettingsView: View {
                 names[index].learn(heard: heard)
             }
             trainingName = nil
+        }
+    }
+}
+
+/// A rounded box of rows, the panel's basic unit.
+private struct Card<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) { content }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+    }
+}
+
+/// A label on the left and its control on the right.
+private struct Row<Control: View>: View {
+    let title: String
+    @ViewBuilder let control: Control
+
+    init(_ title: String, @ViewBuilder control: () -> Control) {
+        self.title = title
+        self.control = control()
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+            Spacer(minLength: 8)
+            control
+        }
+    }
+}
+
+private struct Switch: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+    }
+}
+
+/// A titled section that folds away, so the panel stays short.
+private struct Group<Content: View>: View {
+    let title: String
+    @Binding var isExpanded: Bool
+    var count: Int?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.bold)).frame(width: 10)
+                    Text(title.uppercased()).font(.caption.weight(.semibold))
+                    Spacer()
+                    if let count, count > 0 {
+                        Text("\(count)").font(.caption).foregroundStyle(Color.accentColor)
+                    }
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if isExpanded { content }
         }
     }
 }
@@ -237,6 +410,7 @@ struct ShortcutRecorder: View {
             }
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .help("Click, then press the key or keys to hold for dictation")
         .onDisappear(perform: end)
     }
