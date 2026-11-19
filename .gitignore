@@ -5,3 +5,4 @@ dist/
 *.xcodeproj
 .swiftpm/
 .DS_Store
+design/icons/*.png
