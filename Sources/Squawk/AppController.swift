@@ -8,6 +8,7 @@ import SwiftUI
 
 final class AppController: NSObject, NSApplicationDelegate {
     private enum Status {
+        case preparing
         case idle
         case recording
         case working
@@ -41,7 +42,26 @@ final class AppController: NSObject, NSApplicationDelegate {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(prompt)
-        installHotkeyTap()
+        warmModel()
+    }
+
+    /// CoreML compiles the encoder for the Neural Engine the first time a given
+    /// build of the app loads it, which takes around half a minute. Paying that
+    /// at launch keeps it out of the first dictation; the idle timer then frees
+    /// the memory again.
+    private func warmModel() {
+        show(.preparing)
+        Task { @MainActor in
+            do {
+                try await transcriber.prepare()
+                installHotkeyTap()
+            } catch {
+                // Still install the tap: the next key press retries the load.
+                installHotkeyTap()
+                show(.problem("Speech model: \(error.localizedDescription)"))
+            }
+            scheduleUnload()
+        }
     }
 
     /// The tap cannot be created until Accessibility is granted, and macOS
@@ -115,6 +135,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         let symbol: String
         let tint: NSColor?
         switch status {
+        case .preparing:
+            (symbol, tint) = ("arrow.down.circle", nil)
+            statusLine.title = "Preparing speech model…"
         case .idle:
             (symbol, tint) = ("mic", nil)
             statusLine.title = "Hold \(Preferences.hotkey.label) to dictate"
