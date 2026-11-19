@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macos-15 is an Apple Silicon runner, the only architecture Squawk ships for.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+      - run: swift --version
+      - run: swift test
+      - run: scripts/bundle.sh
+      - run: codesign --verify --strict --verbose=2 dist/Squawk.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squawk-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
