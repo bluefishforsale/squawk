@@ -163,4 +163,11 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --verify-tag --generate-notes
+        # A tag ending in -signing-test proves the Apple half without shipping
+        # anything: its release stays a draft that only repo members can see.
+        run: |
+          draft=()
+          if [[ "$TAG" == *-signing-test ]]; then
+            draft=(--draft)
+          fi
+          gh release create "$TAG" dist/* --verify-tag --generate-notes "${draft[@]}"
