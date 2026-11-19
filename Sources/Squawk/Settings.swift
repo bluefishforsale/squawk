@@ -12,6 +12,7 @@ enum Preferences {
     static let removeFillersKey = "removeFillers"
     static let rewriteLikeKey = "rewriteLike"
     static let spaceAfterPunctuationKey = "spaceAfterPunctuation"
+    static let endWithPeriodKey = "endWithPeriod"
     static let replacementsKey = "replacements"
     static let unloadMinutesKey = "unloadMinutes"
 
@@ -23,6 +24,7 @@ enum Preferences {
             removeFillersKey: true,
             rewriteLikeKey: false,
             spaceAfterPunctuationKey: true,
+            endWithPeriodKey: true,
             unloadMinutesKey: 10,
         ])
     }
@@ -47,6 +49,7 @@ enum Preferences {
             removeFillers: defaults.bool(forKey: removeFillersKey),
             rewriteLike: defaults.bool(forKey: rewriteLikeKey),
             spaceAfterPunctuation: defaults.bool(forKey: spaceAfterPunctuationKey),
+            endWithPeriod: defaults.bool(forKey: endWithPeriodKey),
             replacements: Replacement.parse(defaults.string(forKey: replacementsKey) ?? ""))
     }
 
@@ -71,6 +74,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.removeFillersKey) private var removeFillers = true
     @AppStorage(Preferences.rewriteLikeKey) private var rewriteLike = false
     @AppStorage(Preferences.spaceAfterPunctuationKey) private var spaceAfterPunctuation = true
+    @AppStorage(Preferences.endWithPeriodKey) private var endWithPeriod = true
     @AppStorage(Preferences.replacementsKey) private var replacements = ""
     @AppStorage(Preferences.unloadMinutesKey) private var unloadMinutes = 10
     @State private var binding = Preferences.binding
@@ -96,7 +100,8 @@ struct SettingsView: View {
             Section("Cleanup") {
                 Toggle("Remove um, uh and stuttered words", isOn: $removeFillers)
                 Toggle("Remove filler \"like\", and turn \"she was like\" into \"she said\"", isOn: $rewriteLike)
-                Toggle("Add a space after punctuation", isOn: $spaceAfterPunctuation)
+                Toggle("Add a space after punctuation and between dictations", isOn: $spaceAfterPunctuation)
+                Toggle("End each dictation with a full stop if it has none", isOn: $endWithPeriod)
             }
 
             Section {

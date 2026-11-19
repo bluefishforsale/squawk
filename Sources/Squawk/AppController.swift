@@ -25,6 +25,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var status = Status.preparing
     private var isLearningShortcut = false
     private var unloadTimer: Timer?
+    private var pendingFinish: DispatchWorkItem?
+    /// The app the last dictation went into, cleared as soon as the user types
+    /// or clicks. While it is set, the cursor is still right after that text.
+    private var continuingIn: pid_t?
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -47,6 +51,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             case .chord: perform(gesture.otherKeyDown())
             }
         }
+        hotkeys.onUserInput = { [unowned self] in continuingIn = nil }
         NotificationCenter.default.addObserver(
             self, selector: #selector(preferencesChanged), name: UserDefaults.didChangeNotification, object: nil)
         preferencesChanged()
@@ -110,6 +115,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func perform(_ action: HoldGesture.Action?) {
         switch action {
         case .start:
+            flushPendingFinish()
             do {
                 try recorder.start()
             } catch {
@@ -124,10 +130,24 @@ final class AppController: NSObject, NSApplicationDelegate {
             show(.idle)
             scheduleUnload()
         case .finish:
-            finish()
+            // Keep listening a moment past key release: people let go on the
+            // last syllable, and the tail of that word is still in the air.
+            show(.working)
+            let work = DispatchWorkItem { [unowned self] in
+                pendingFinish = nil
+                finish()
+            }
+            pendingFinish = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
         case nil:
             break
         }
+    }
+
+    private func flushPendingFinish() {
+        guard let work = pendingFinish else { return }
+        work.perform()
+        work.cancel()
     }
 
     private func finish() {
@@ -149,9 +169,8 @@ final class AppController: NSObject, NSApplicationDelegate {
                 let output = try await transcriber.transcribe(samples, names: names)
                 let text = cleanup.apply(output.text)
                 if !text.isEmpty {
-                    // The trailing space keeps back-to-back dictations from
-                    // running together as "one.Two".
-                    TextInserter.paste(cleanup.spaceAfterPunctuation ? text + " " : text)
+                    TextInserter.paste(text, leadingSpace: cleanup.spaceAfterPunctuation && needsLeadingSpace(text))
+                    continuingIn = NSWorkspace.shared.frontmostApplication?.processIdentifier
                 }
                 show(output.warning.map(Status.problem) ?? .idle)
             } catch {
@@ -159,6 +178,19 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             scheduleUnload()
         }
+    }
+
+    /// Whether the text about to be pasted follows directly on other text, so
+    /// that back-to-back dictations do not run together as "one.Two".
+    private func needsLeadingSpace(_ text: String) -> Bool {
+        guard let first = text.first, !first.isPunctuation else { return false }
+        if let known = TextInserter.characterBeforeCursor() {
+            guard let before = known else { return false }
+            return !before.isWhitespace && !"([{\"'“‘".contains(before)
+        }
+        // The app would not say what precedes the cursor. Fall back to what
+        // Squawk knows: it just dictated here and nothing was typed since.
+        return continuingIn != nil && continuingIn == NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
 
     /// Settings' Train button: listen briefly and report what the recognizer
@@ -213,8 +245,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             (symbol, tint) = ("exclamationmark.triangle", .systemYellow)
             statusLine.title = message
         }
-        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: statusLine.title)
-        statusItem.button?.contentTintColor = tint
+        // A template image is drawn by macOS in whatever contrasts with the
+        // menu bar, light or dark. Only the two alert states carry a color.
+        var image = NSImage(systemSymbolName: symbol, accessibilityDescription: statusLine.title)
+        if let tint {
+            image = image?.withSymbolConfiguration(.init(paletteColors: [tint]))
+        }
+        image?.isTemplate = tint == nil
+        statusItem.button?.image = image
+        statusItem.button?.contentTintColor = nil
     }
 
     @objc private func openSettings() {

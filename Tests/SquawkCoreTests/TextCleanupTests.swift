@@ -39,7 +39,7 @@ import Testing
     }
 
     @Test func replacementTextWithDollarSignIsLiteral() {
-        let cleanup = TextCleanup(replacements: [Replacement(spoken: "home dir", written: "$HOME")])
+        let cleanup = TextCleanup(endWithPeriod: false, replacements: [Replacement(spoken: "home dir", written: "$HOME")])
         #expect(cleanup.apply("cd to home dir") == "cd to $HOME")
     }
 
@@ -84,7 +84,7 @@ import Testing
     }
 
     @Test func missingSpaceAfterPunctuationIsInserted() {
-        #expect(TextCleanup().apply("First,second.Third!fourth") == "First, second. Third! fourth")
+        #expect(TextCleanup().apply("First,second.Third!fourth") == "First, second. Third! fourth.")
     }
 
     @Test func decimalsDomainsAndAbbreviationsKeepTheirDots() {
@@ -94,6 +94,23 @@ import Testing
 
     @Test func spacingIsLeftAloneWhenTheSettingIsOff() {
         #expect(TextCleanup(spaceAfterPunctuation: false).apply("First,second") == "First,second")
+    }
+
+    @Test func sentenceLeftUnfinishedByTheRecognizerGetsItsFullStop() {
+        #expect(TextCleanup().apply("Okay, let's test it out") == "Okay, let's test it out.")
+    }
+
+    @Test func existingEndPunctuationIsNotDoubled() {
+        #expect(TextCleanup().apply("Does this work?") == "Does this work?")
+        #expect(TextCleanup().apply("It works, mostly.") == "It works, mostly.")
+    }
+
+    @Test func shortFragmentsLikeNamesStayBare() {
+        #expect(TextCleanup().apply("Terrac Skiens") == "Terrac Skiens")
+    }
+
+    @Test func fullStopIsNotAddedWhenTheSettingIsOff() {
+        #expect(TextCleanup(endWithPeriod: false).apply("let's test it out") == "let's test it out")
     }
 
     @Test func parseSkipsLinesWithoutArrow() {

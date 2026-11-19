@@ -8,6 +8,8 @@ import SquawkCore
 
 final class HotkeyMonitor {
     var onEdge: (BindingTracker.Edge) -> Void = { _ in }
+    /// A real key press or mouse click, meaning the cursor may have moved.
+    var onUserInput: () -> Void = {}
 
     /// Paused while dictation is disabled and while settings is learning a new
     /// shortcut, so pressing candidate keys does not start a recording.
@@ -33,7 +35,7 @@ final class HotkeyMonitor {
     /// Fails until the user grants Accessibility; call again after they do.
     func start() -> Bool {
         guard tap == nil else { return true }
-        let types: [CGEventType] = [.flagsChanged, .keyDown, .keyUp]
+        let types: [CGEventType] = [.flagsChanged, .keyDown, .keyUp, .leftMouseDown, .rightMouseDown]
         let events = types.reduce(CGEventMask(0)) { $0 | 1 << $1.rawValue }
         let callback: CGEventTapCallBack = { _, type, event, context in
             let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(context!).takeUnretainedValue()
@@ -56,6 +58,11 @@ final class HotkeyMonitor {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return false
         }
+        guard event.getIntegerValueField(.eventSourceUserData) != TextInserter.eventTag else { return false }
+        if type == .leftMouseDown || type == .rightMouseDown {
+            onUserInput()
+            return false
+        }
         guard !isPaused else { return false }
 
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
@@ -71,6 +78,7 @@ final class HotkeyMonitor {
         default:
             return false
         }
+        if type == .keyDown, !swallow { onUserInput() }
         edges.forEach(onEdge)
         return swallow
     }

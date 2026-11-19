@@ -18,7 +18,7 @@ final class Recorder {
         let format = engine.inputNode.outputFormat(forBus: 0)
         sampleRate = format.sampleRate
         let captured = captured
-        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             guard let channel = buffer.floatChannelData?[0] else { return }
             let chunk = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             captured.withLock { $0.append(contentsOf: chunk) }

@@ -32,17 +32,22 @@ public struct TextCleanup: Sendable {
     /// Drops filler "like" and turns "she was like," into "she said,".
     public var rewriteLike: Bool
     public var spaceAfterPunctuation: Bool
+    /// The recognizer reads level or trailing-off intonation as an unfinished
+    /// sentence and leaves the full stop out; this puts it back.
+    public var endWithPeriod: Bool
     public var replacements: [Replacement]
 
     public init(
         removeFillers: Bool = true,
         rewriteLike: Bool = false,
         spaceAfterPunctuation: Bool = true,
+        endWithPeriod: Bool = true,
         replacements: [Replacement] = []
     ) {
         self.removeFillers = removeFillers
         self.rewriteLike = rewriteLike
         self.spaceAfterPunctuation = spaceAfterPunctuation
+        self.endWithPeriod = endWithPeriod
         self.replacements = replacements
     }
 
@@ -72,7 +77,15 @@ public struct TextCleanup: Sendable {
             text = text.replacingOccurrences(
                 of: #"(?<=\p{Ll}{2})\.(?=\p{Lu}\p{Ll})"#, with: ". ", options: .regularExpression)
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Three words is the floor so that dictating a name or a search term
+        // into a field does not grow a full stop.
+        if endWithPeriod, let last = text.last, last.isLetter || last.isNumber,
+            text.split(separator: " ").count >= 3
+        {
+            text += "."
+        }
+        return text
     }
 
     private static let notInWord = #"(?<![\p{L}\p{N}'’])"#
