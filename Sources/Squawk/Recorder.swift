@@ -2,7 +2,8 @@
 // 130 to 400 ms, long enough to swallow the first word or two, so the recorder
 // can keep the device open between dictations and hand back a little audio
 // from just before the key went down. How long it stays open is the user's
-// call, because macOS shows the microphone indicator the whole time.
+// call, because macOS shows the microphone indicator the whole time. The
+// default is the private one: open only while the key is held.
 
 import AVFoundation
 import FluidAudio
@@ -50,7 +51,7 @@ final class Recorder {
     private let buffers = OSAllocatedUnfairLock(initialState: Buffers())
     private var engine: AVAudioEngine?
     private var sampleRate = 0.0
-    private var readiness = MicrophoneReadiness.warm
+    private var readiness = MicrophoneReadiness.onDemand
     private var cooldown = 0
     private var configurationObserver: NSObjectProtocol?
 
@@ -117,6 +118,7 @@ final class Recorder {
 
     private func openIfNeeded() {
         guard engine == nil else { return }
+        let began = ProcessInfo.processInfo.systemUptime
         let engine = AVAudioEngine()
         let format = engine.inputNode.outputFormat(forBus: 0)
         sampleRate = format.sampleRate
@@ -149,6 +151,8 @@ final class Recorder {
             return
         }
         self.engine = engine
+        log.notice(
+            "microphone open: \(format.channelCount, privacy: .public) ch at \(Int(format.sampleRate), privacy: .public) Hz, took \(Int((ProcessInfo.processInfo.systemUptime - began) * 1000), privacy: .public) ms")
         // A new input device (AirPods connecting) invalidates the running
         // engine. Drop it; the next start opens the new device.
         configurationObserver = NotificationCenter.default.addObserver(

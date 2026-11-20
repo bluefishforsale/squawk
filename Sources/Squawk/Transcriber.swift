@@ -7,6 +7,20 @@ import FluidAudio
 import Foundation
 import SquawkCore
 
+enum ModelInstallError: LocalizedError {
+    case busy
+    case badRevision
+    case failedProbe
+
+    var errorDescription: String? {
+        switch self {
+        case .busy: "A speech model update is already in progress."
+        case .badRevision: "That is not a model revision."
+        case .failedProbe: "The new speech model failed its test. The current one was kept."
+        }
+    }
+}
+
 actor Transcriber {
     struct Output {
         var text: String
@@ -20,19 +34,24 @@ actor Transcriber {
     private static let trailingSilence = 4800
 
     private var manager: AsrManager?
+    /// True while a model update is downloading. The model in use stays
+    /// loaded for that whole time: a reload would be checked against the
+    /// revision being installed and fail.
+    private var isInstalling = false
     private var boosting: (names: [NameEntry], session: VocabularyBoostingSession)?
 
     func prepare() async throws {
         guard manager == nil else { return }
-        let cache = AsrModels.defaultCacheDirectory(for: .v3)
+        guard !isInstalling else { throw ModelInstallError.busy }
+        let active = ModelStore.active
+        ModelStore.expect(revision: active.revision)
         let models: AsrModels
-        if AsrModels.modelsExist(at: cache, version: .v3) {
+        if AsrModels.modelsExist(at: active.directory, version: .v3) {
             ModelHub.offlineMode = true
-            models = try await AsrModels.loadFromCache(version: .v3)
+            models = try await AsrModels.load(from: active.directory, version: .v3)
         } else {
-            // NOTE: one of the two network accesses in the app (the other is
-            // the name model below). Once the models are on disk every later
-            // launch takes the branch above and stays offline.
+            // NOTE: the first-launch download. Once the models are on disk
+            // every later launch takes the branch above and stays offline.
             ModelHub.offlineMode = false
             models = try await AsrModels.downloadAndLoad(version: .v3)
             ModelHub.offlineMode = true
@@ -40,6 +59,60 @@ actor Transcriber {
         let manager = AsrManager(config: .default)
         try await manager.loadModels(models)
         self.manager = manager
+    }
+
+    /// Downloads the speech model at `revision` into its own folder, proves
+    /// it can transcribe, and only then switches to it. Dictation keeps
+    /// working on the current model throughout, and a failure leaves
+    /// everything as it was.
+    func install(revision: String, progress: @escaping @Sendable (Double) -> Void) async throws {
+        guard ModelStore.isRevision(revision) else { throw ModelInstallError.badRevision }
+        guard !isInstalling else { throw ModelInstallError.busy }
+        try await prepare()
+        isInstalling = true
+        let previous = ModelStore.active.revision
+        let directory = ModelStore.directory(forRevision: revision)
+        ModelStore.expect(revision: revision)
+        ModelHub.offlineMode = false
+        defer {
+            ModelHub.offlineMode = true
+            isInstalling = false
+        }
+        do {
+            let models = try await AsrModels.downloadAndLoad(
+                to: directory, version: .v3, progressHandler: { progress($0.fractionCompleted) })
+            let candidate = AsrManager(config: .default)
+            try await candidate.loadModels(models)
+            try await Self.proveItTranscribes(candidate)
+            await manager?.cleanup()
+            manager = candidate
+            ModelStore.revision = revision
+            ModelStore.removeUpdates(except: revision)
+        } catch {
+            ModelStore.expect(revision: previous)
+            try? FileManager.default.removeItem(at: directory.deletingLastPathComponent())
+            throw error
+        }
+    }
+
+    /// A model can load and still be useless, so it has to turn a known
+    /// sentence, spoken by the system voice, back into text containing its
+    /// key word. If the system voice is unavailable the check is skipped.
+    private static func proveItTranscribes(_ candidate: AsrManager) async throws {
+        let clip = FileManager.default.temporaryDirectory.appendingPathComponent("squawk-probe-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: clip) }
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        say.arguments = ["-o", clip.path, "--data-format=LEI16@16000", "This is a test of the speech model."]
+        guard (try? say.run()) != nil else { return }
+        say.waitUntilExit()
+        guard say.terminationStatus == 0,
+            let samples = try? AudioConverter().resampleAudioFile(clip), samples.count >= minimumSamples
+        else { return }
+        var state = TdtDecoderState.make(decoderLayers: await candidate.decoderLayerCount)
+        let padded = samples + [Float](repeating: 0, count: trailingSilence)
+        let text = try await candidate.transcribe(padded, decoderState: &state).text
+        guard text.lowercased().contains("test") else { throw ModelInstallError.failedProbe }
     }
 
     /// Loads the name model too, so the first dictation after launch does not
@@ -71,6 +144,7 @@ actor Transcriber {
     }
 
     func unload() async {
+        guard !isInstalling else { return }
         await manager?.cleanup()
         manager = nil
         boosting = nil
@@ -87,8 +161,9 @@ actor Transcriber {
         let onDisk = CtcModels.modelsExist(at: CtcModels.defaultCacheDirectory())
         // NOTE: the second network access: a one-time fetch of the 110M CTC
         // model the first time any name is listed.
-        ModelHub.offlineMode = onDisk
-        defer { ModelHub.offlineMode = true }
+        // A model update in progress owns the offline switch.
+        if !isInstalling { ModelHub.offlineMode = onDisk }
+        defer { if !isInstalling { ModelHub.offlineMode = true } }
         let models = try await CtcModels.downloadAndLoad()
 
         let terms = names.map { CustomVocabularyTerm(text: $0.name, aliases: $0.aliases) }

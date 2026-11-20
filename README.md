@@ -50,6 +50,23 @@ the on/off switch and every setting. There is no dock icon and no other window.
 While you hold the key a small orange level meter appears at the top of the
 screen so you can see it is hearing you, and it disappears on release.
 
+The panel has five panes, switched with the row of icons under the header.
+
+| Dictation | Cleanup |
+| --- | --- |
+| ![The dictation pane: the dictation key with its on/off switch, sounds, and how long the microphone stays open.](design/screenshots/dictation.png) | ![The cleanup pane: switches for removing fillers, filler "like", spacing after punctuation and ending with a full stop.](design/screenshots/cleanup.png) |
+
+| Names | Replacements |
+| --- | --- |
+| ![The names pane: a list of names, each with the spellings it is misheard as and a Train button.](design/screenshots/names.png) | ![The replacements pane: a text box of spoken => written pairs, one per line.](design/screenshots/replacements.png) |
+
+| General | With updates waiting |
+| --- | --- |
+| ![The general pane: when to free model memory, launch at login, the daily update check, and the speech model in use.](design/screenshots/general.png) | ![The panel with two banners above the panes, one offering a newer Squawk and one a newer speech model, each with its own Update button.](design/screenshots/updates.png) |
+
+The screenshots are drawn by the app itself from sample data
+(`scripts/screenshots.sh`), so they show the real panel and nobody's settings.
+
 Speech recognition is Parakeet TDT 0.6B v3, run through
 [FluidAudio](https://github.com/FluidInference/FluidAudio) as CoreML models.
 The encoder runs on the Neural Engine, which is why it is fast on a laptop
@@ -64,18 +81,26 @@ memory pressure without swapping, and Squawk unloads the model itself after ten
 idle minutes (configurable). The app is 20 MB on disk and the download is
 10 MB.
 
-Three details cost some effort and are worth knowing about.
+Four details cost some effort and are worth knowing about.
 
 The microphone takes 130 to 400 ms to open, long enough to swallow your first
-word. By default Squawk keeps it open for 30 seconds after each dictation and
-starts each recording a third of a second in the past, from a small buffer in
-memory that is constantly overwritten. You can change this to "always" or "only
-while held"; macOS shows its microphone indicator whenever the microphone is
-open.
+word. By default Squawk accepts that, and opens the microphone only while the
+key is held, so the macOS microphone indicator is on only while you dictate.
+Pausing a beat after pressing the key avoids the clipping. If you would rather
+not, "Keep microphone open" can be set to 30 seconds after each dictation or to
+always; Squawk then starts each recording a third of a second in the past, from
+a small buffer in memory that is constantly overwritten.
 
 People release the key while the last word is still coming out, and audio cut
 mid-word makes the model return nothing. So recording runs on after release
 until your voice goes quiet, between 150 and 600 ms.
+
+A microphone hears the room, including whatever the Mac itself is playing, and
+a video's dialogue will be transcribed along with your voice. "Mute this Mac
+while dictating" silences the output while the key is held; playback carries
+on, you just do not hear it for a moment. macOS's echo cancellation was tried
+first and dropped: it took about 1.5 s to start on each dictation and made
+playback in other apps stutter. With headphones none of this arises.
 
 Text is inserted by putting it on the clipboard and sending Cmd+V, then
 restoring what was on the clipboard before. That works in nearly every app,
@@ -117,8 +142,8 @@ letter is refused, since it would stop you typing that letter; F-keys are fine
 on their own.
 
 Bluetooth headsets drop to call-quality audio whenever a microphone is open.
-If you listen to music on AirPods, set "Keep microphone open" to "Only while
-held", or use a different input device.
+With the default "Only while held" that lasts only as long as a dictation; the
+other microphone settings hold a headset in call quality for longer.
 
 ## Privacy and data use
 
@@ -130,15 +155,18 @@ characters"), never what was said.
 
 There are no accounts, no analytics, no telemetry and no crash reporting.
 
-Squawk makes exactly three kinds of network request, none of which carries
+Squawk makes exactly four kinds of network request, none of which carries
 anything about you, your Mac or your speech:
 
 1. A one-time download of the speech model from Hugging Face on first launch.
 2. A one-time download of the name-correction model from Hugging Face, the
    first time you add a name.
 3. A daily check of this repository's public releases feed on GitHub, to see
-   whether a newer version exists. This can be switched off in the panel under
-   General.
+   whether a newer version exists.
+4. A daily check of the speech model's public repository on Hugging Face, to
+   see whether newer weights exist.
+
+The two daily checks share one switch in the panel under General.
 
 Hugging Face and GitHub see your IP address when those requests are made, as
 any web server does. Once the models are on disk Squawk runs with FluidAudio's
@@ -153,6 +181,17 @@ panel offers to install it. Squawk downloads the DMG from this repository's
 releases and installs it only if the app inside is signed by the same
 Developer ID team as the copy you are running. A download that fails that check
 is not installed.
+
+The speech model updates separately from the app. When the weights Squawk uses
+change upstream, the panel offers the new model with its own Update button.
+Squawk downloads it into its own folder
+(`~/Library/Application Support/Squawk/Models`), has it transcribe a test
+sentence, and switches to it only if that works; the app itself is not replaced
+and dictation keeps working on the old model in the meantime. Commits upstream
+that do not change the files Squawk loads, such as README edits, are not
+offered. Unlike an app update, a model is not code-signed: installing one
+trusts the FluidInference account on Hugging Face, which is the same trust the
+first download already places in it.
 
 ## Licensing
 

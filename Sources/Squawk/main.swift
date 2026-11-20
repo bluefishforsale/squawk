@@ -4,6 +4,12 @@
 // Add `--name "Terrac=terek,tarik"` (repeatable) to test name correction.
 // `--install-update <dmg file>` runs the self-update path against a local
 // disk image, with the same signature and version checks as a real update.
+// `--check-model` reports whether Hugging Face has newer weights than the
+// ones on disk, and `--install-model <revision>` installs that revision.
+// `--listen <seconds>` records from the microphone and prints the transcript;
+// add `--mute` to silence the output meanwhile, as the app's setting does.
+// `--render-panes <folder>` writes a PNG of each pane of the panel, which is
+// how the README screenshots are made (see scripts/screenshots.sh).
 
 import AppKit
 import FluidAudio
@@ -48,6 +54,73 @@ if let path = values(after: "--install-update").first, let version = AppVersion(
         }
     }
     dispatchMain()
+}
+
+if arguments.contains("--check-model") {
+    Task {
+        do {
+            let update = try await ModelStore.check()
+            print("installed:", ModelStore.active.revision ?? "first download", "| update:", update?.revision ?? "none")
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
+if let revision = values(after: "--install-model").first {
+    Task {
+        do {
+            try await Transcriber().install(revision: revision) { fraction in
+                FileHandle.standardError.write(Data("\r\(Int(fraction * 100))%".utf8))
+            }
+            print("\ninstalled:", ModelStore.active.revision ?? "first download")
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("\nsquawk: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
+if let seconds = values(after: "--listen").first.flatMap(Double.init) {
+    let muter = OutputMuter()
+    if arguments.contains("--mute") {
+        muter.mute()
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { muter.restore() }
+    }
+    let recorder = Recorder()
+    recorder.onError = { error in
+        FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+    recorder.setReadiness(.onDemand, enabled: true)
+    Task {
+        do {
+            let started = Date()
+            recorder.start()
+            try await Task.sleep(for: .seconds(seconds))
+            let samples = try recorder.stop()
+            let rms = (samples.reduce(0) { $0 + $1 * $1 } / Float(max(samples.count, 1))).squareRoot()
+            let lost = Date().timeIntervalSince(started) - Double(samples.count) / 16000
+            FileHandle.standardError.write(
+                Data("recorded \(samples.count) samples, rms \(rms), \(Int(lost * 1000)) ms lost opening the microphone\n".utf8))
+            print(samples.count >= Transcriber.minimumSamples ? try await Transcriber().transcribe(samples).text : "")
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
+if let folder = values(after: "--render-panes").first {
+    PaneRenderer.render(into: URL(fileURLWithPath: folder, isDirectory: true))
+    exit(0)
 }
 
 let app = NSApplication.shared
