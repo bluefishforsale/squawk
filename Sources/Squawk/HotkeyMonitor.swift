@@ -9,7 +9,8 @@ import SquawkCore
 final class HotkeyMonitor {
     var onEdge: (BindingTracker.Edge) -> Void = { _ in }
     /// A real key press or mouse click, meaning the cursor may have moved.
-    var onUserInput: () -> Void = {}
+    /// Clicks carry where on screen they landed; key presses pass nil.
+    var onUserInput: (CGPoint?) -> Void = { _ in }
 
     /// Paused while dictation is disabled and while settings is learning a new
     /// shortcut, so pressing candidate keys does not start a recording.
@@ -60,7 +61,7 @@ final class HotkeyMonitor {
         }
         guard event.getIntegerValueField(.eventSourceUserData) != TextInserter.eventTag else { return false }
         if type == .leftMouseDown || type == .rightMouseDown {
-            onUserInput()
+            onUserInput(event.location)
             return false
         }
         guard !isPaused else { return false }
@@ -78,7 +79,7 @@ final class HotkeyMonitor {
         default:
             return false
         }
-        if type == .keyDown, !swallow { onUserInput() }
+        if type == .keyDown, !swallow { onUserInput(nil) }
         edges.forEach(onEdge)
         return swallow
     }

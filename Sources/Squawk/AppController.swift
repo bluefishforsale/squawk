@@ -69,11 +69,22 @@ final class AppController: NSObject, NSApplicationDelegate {
             case .chord: perform(gesture.otherKeyDown())
             }
         }
-        hotkeys.onUserInput = { [unowned self] in
+        hotkeys.onUserInput = { [unowned self] click in
             // The paste's own Cmd+V arrives back through the tap a moment
             // after it is posted; it must not count as the user typing.
-            guard ProcessInfo.processInfo.systemUptime - lastPasteAt > 0.4 else { return }
-            continuingIn = nil
+            guard ProcessInfo.processInfo.systemUptime - lastPasteAt > 0.4, let target = continuingIn else { return }
+            // Only input that reaches the app dictated into can move its
+            // cursor. Starting a video in a browser and coming back leaves
+            // the cursor where the last dictation ended, and the next one
+            // still needs its leading space.
+            guard let click else {
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier == target { continuingIn = nil }
+                return
+            }
+            // Off the event tap's path: the window lookup must not delay input.
+            DispatchQueue.main.async { [unowned self] in
+                if continuingIn == target, Self.applicationUnder(click) == target { continuingIn = nil }
+            }
         }
         recorder.onLevel = { [unowned self] rms in
             overlay.history.push(rms: rms)
@@ -353,6 +364,23 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             scheduleUnload()
         }
+    }
+
+    /// The process whose window is frontmost at a screen point, from the
+    /// window server's own list, so no other app is asked anything.
+    private static func applicationUnder(_ point: CGPoint) -> pid_t? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return nil }
+        // Front to back. Layer 0 is ordinary app windows; the menu bar,
+        // overlays and Squawk's own level meter sit on other layers.
+        for window in windows where window[kCGWindowLayer as String] as? Int == 0 {
+            guard let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"],
+                CGRect(x: x, y: y, width: width, height: height).contains(point)
+            else { continue }
+            return (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+        }
+        return nil
     }
 
     /// Whether the text about to be pasted follows directly on other text, so
