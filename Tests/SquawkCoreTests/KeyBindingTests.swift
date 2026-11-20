@@ -116,4 +116,16 @@ import Testing
         entry.learn(heard: "  ")
         #expect(entry.soundsLike == "terek")
     }
+
+    @Test func trainingAddsARepeatedNameOnlyOnce() {
+        var entry = NameEntry(text: "Terrac", soundsLike: "terek")
+        entry.learn(heard: "Tarek, Tarek, Tarek. Tarek")
+        #expect(entry.soundsLike == "terek, Tarek")
+    }
+
+    @Test func trainingSplitsSeveralHearingsAndSkipsKnownOnes() {
+        var entry = NameEntry(text: "Skiens", soundsLike: "skeens")
+        entry.learn(heard: "Skeens, skien, Skeans.")
+        #expect(entry.soundsLike == "skeens, skien, Skeans")
+    }
 }
