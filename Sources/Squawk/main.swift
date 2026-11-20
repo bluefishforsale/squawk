@@ -100,6 +100,8 @@ if let seconds = values(after: "--listen").first.flatMap(Double.init) {
     recorder.setReadiness(.onDemand, enabled: true)
     Task {
         do {
+            // As in the app, where the engine is built long before a key press.
+            try await Task.sleep(for: .seconds(1))
             let started = Date()
             recorder.start()
             try await Task.sleep(for: .seconds(seconds))
