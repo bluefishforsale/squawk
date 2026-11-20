@@ -210,7 +210,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [self] in
             hotkeys.binding = Preferences.binding
             applyPause()
-            recorder.setReadiness(Preferences.microphone, enabled: Preferences.isEnabled)
+            recorder.setReadiness(
+                Preferences.microphone, enabled: Preferences.isEnabled, cancelEcho: Preferences.cancelEcho)
             if !Preferences.checkForUpdates {
                 panel.update = nil
                 if panel.modelProgress == .idle { panel.modelUpdate = nil }

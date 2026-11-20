@@ -52,13 +52,22 @@ final class Recorder {
     private var engine: AVAudioEngine?
     private var sampleRate = 0.0
     private var readiness = MicrophoneReadiness.onDemand
+    private var cancelsEcho = false
     private var cooldown = 0
     private var configurationObserver: NSObjectProtocol?
 
-    func setReadiness(_ readiness: MicrophoneReadiness, enabled: Bool) {
+    /// `cancelEcho` has macOS subtract whatever this Mac is playing from the
+    /// microphone signal, so a video or music in the room is not transcribed.
+    func setReadiness(_ readiness: MicrophoneReadiness, enabled: Bool, cancelEcho: Bool) {
         queue.async { [self] in
             self.readiness = readiness
             let recording = buffers.withLock { $0.recording }
+            if cancelEcho != cancelsEcho {
+                cancelsEcho = cancelEcho
+                // Voice processing can only be switched on a stopped engine.
+                // Mid-dictation the change waits for the next open.
+                if !recording { close() }
+            }
             if readiness == .always, enabled {
                 openIfNeeded()
             } else if !recording, readiness != .warm || !enabled {
@@ -118,7 +127,20 @@ final class Recorder {
 
     private func openIfNeeded() {
         guard engine == nil else { return }
+        let began = ProcessInfo.processInfo.systemUptime
         let engine = AVAudioEngine()
+        if cancelsEcho {
+            do {
+                try engine.inputNode.setVoiceProcessingEnabled(true)
+                // Voice processing turns other audio down while it runs. This
+                // is the least it can be told to; it cannot be told not to.
+                engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration = .init(
+                    enableAdvancedDucking: false, duckingLevel: .min)
+            } catch {
+                // Some input devices do not support it. Record without.
+                log.error("echo cancellation unavailable: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         let format = engine.inputNode.outputFormat(forBus: 0)
         sampleRate = format.sampleRate
         let buffers = buffers
@@ -150,6 +172,8 @@ final class Recorder {
             return
         }
         self.engine = engine
+        log.notice(
+            "microphone open: \(format.channelCount, privacy: .public) ch at \(Int(format.sampleRate), privacy: .public) Hz, echo cancellation \(self.cancelsEcho ? "on" : "off", privacy: .public), took \(Int((ProcessInfo.processInfo.systemUptime - began) * 1000), privacy: .public) ms")
         // A new input device (AirPods connecting) invalidates the running
         // engine. Drop it; the next start opens the new device.
         configurationObserver = NotificationCenter.default.addObserver(

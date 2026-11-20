@@ -6,6 +6,8 @@
 // disk image, with the same signature and version checks as a real update.
 // `--check-model` reports whether Hugging Face has newer weights than the
 // ones on disk, and `--install-model <revision>` installs that revision.
+// `--listen <seconds>` records from the microphone and prints the transcript;
+// add `--cancel-echo` to compare with and without echo cancellation.
 // `--render-panes <folder>` writes a PNG of each pane of the panel, which is
 // how the README screenshots are made (see scripts/screenshots.sh).
 
@@ -78,6 +80,33 @@ if let revision = values(after: "--install-model").first {
             exit(0)
         } catch {
             FileHandle.standardError.write(Data("\nsquawk: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
+if let seconds = values(after: "--listen").first.flatMap(Double.init) {
+    let recorder = Recorder()
+    recorder.onError = { error in
+        FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+    recorder.setReadiness(.onDemand, enabled: true, cancelEcho: arguments.contains("--cancel-echo"))
+    Task {
+        do {
+            let started = Date()
+            recorder.start()
+            try await Task.sleep(for: .seconds(seconds))
+            let samples = try recorder.stop()
+            let rms = (samples.reduce(0) { $0 + $1 * $1 } / Float(max(samples.count, 1))).squareRoot()
+            let lost = Date().timeIntervalSince(started) - Double(samples.count) / 16000
+            FileHandle.standardError.write(
+                Data("recorded \(samples.count) samples, rms \(rms), \(Int(lost * 1000)) ms lost opening the microphone\n".utf8))
+            print(samples.count >= Transcriber.minimumSamples ? try await Transcriber().transcribe(samples).text : "")
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
     }
