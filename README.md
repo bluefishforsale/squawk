@@ -83,13 +83,14 @@ idle minutes (configurable). The app is 20 MB on disk and the download is
 
 Four details cost some effort and are worth knowing about.
 
-The microphone takes 130 to 400 ms to open, long enough to swallow your first
-word. By default Squawk accepts that, and opens the microphone only while the
-key is held, so the macOS microphone indicator is on only while you dictate.
-Pausing a beat after pressing the key avoids the clipping. If you would rather
-not, "Keep microphone open" can be set to 30 seconds after each dictation or to
-always; Squawk then starts each recording a third of a second in the past, from
-a small buffer in memory that is constantly overwritten.
+Building an audio engine and opening the microphone took 350 to 450 ms, long
+enough to swallow your first word. Squawk now builds the engine ahead of time
+and keeps it stopped, so a key press only has to start it, which takes about
+150 ms. By default the microphone is open only while the key is held, so the
+macOS microphone indicator is on only while you dictate. If the first syllable
+still gets clipped, "Keep microphone open" can be set to 30 seconds after each
+dictation or to always; Squawk then starts each recording a third of a second
+in the past, from a small buffer in memory that is constantly overwritten.
 
 People release the key while the last word is still coming out, and audio cut
 mid-word makes the model return nothing. So recording runs on after release
