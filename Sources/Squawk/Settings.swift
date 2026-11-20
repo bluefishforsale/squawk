@@ -15,7 +15,7 @@ enum Preferences {
     static let endWithPeriodKey = "endWithPeriod"
     static let playSoundsKey = "playSounds"
     static let microphoneKey = "microphone"
-    static let cancelEchoKey = "cancelEcho"
+    static let muteOutputKey = "muteOutput"
     static let replacementsKey = "replacements"
     static let unloadMinutesKey = "unloadMinutes"
     static let checkForUpdatesKey = "checkForUpdates"
@@ -64,8 +64,8 @@ enum Preferences {
         defaults.string(forKey: microphoneKey).flatMap(MicrophoneReadiness.init) ?? .onDemand
     }
 
-    static var cancelEcho: Bool {
-        defaults.bool(forKey: cancelEchoKey)
+    static var muteOutput: Bool {
+        defaults.bool(forKey: muteOutputKey)
     }
 
     static var playSounds: Bool {
@@ -130,7 +130,7 @@ struct PanelView: View {
     @AppStorage(Preferences.endWithPeriodKey) private var endWithPeriod = true
     @AppStorage(Preferences.playSoundsKey) private var playSounds = true
     @AppStorage(Preferences.microphoneKey) private var microphone = MicrophoneReadiness.onDemand
-    @AppStorage(Preferences.cancelEchoKey) private var cancelEcho = false
+    @AppStorage(Preferences.muteOutputKey) private var muteOutput = false
     @AppStorage(Preferences.replacementsKey) private var replacements = ""
     @AppStorage(Preferences.unloadMinutesKey) private var unloadMinutes = 10
     @AppStorage(Preferences.checkForUpdatesKey) private var checkForUpdates = true
@@ -224,8 +224,8 @@ struct PanelView: View {
                     .help("Opening the microphone swallows the first word. Keeping it open avoids that; macOS shows its microphone indicator while it is open, and Bluetooth headsets drop to call quality.")
                 }
                 Divider()
-                Row("Ignore audio this Mac is playing") { Switch(isOn: $cancelEcho) }
-                    .help("Keeps a video or music coming from the speakers out of your dictation. macOS turns other audio down slightly while you dictate. Not needed with headphones.")
+                Row("Mute this Mac while dictating") { Switch(isOn: $muteOutput) }
+                    .help("Silences the speakers while the key is held, so a video or music is not transcribed along with your voice. Playback continues; you just do not hear it. Not needed with headphones.")
             }
     }
 

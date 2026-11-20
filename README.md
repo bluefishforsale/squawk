@@ -81,7 +81,7 @@ memory pressure without swapping, and Squawk unloads the model itself after ten
 idle minutes (configurable). The app is 20 MB on disk and the download is
 10 MB.
 
-Three details cost some effort and are worth knowing about.
+Four details cost some effort and are worth knowing about.
 
 The microphone takes 130 to 400 ms to open, long enough to swallow your first
 word. By default Squawk accepts that, and opens the microphone only while the
@@ -94,6 +94,13 @@ a small buffer in memory that is constantly overwritten.
 People release the key while the last word is still coming out, and audio cut
 mid-word makes the model return nothing. So recording runs on after release
 until your voice goes quiet, between 150 and 600 ms.
+
+A microphone hears the room, including whatever the Mac itself is playing, and
+a video's dialogue will be transcribed along with your voice. "Mute this Mac
+while dictating" silences the output while the key is held; playback carries
+on, you just do not hear it for a moment. macOS's echo cancellation was tried
+first and dropped: it took about 1.5 s to start on each dictation and made
+playback in other apps stutter. With headphones none of this arises.
 
 Text is inserted by putting it on the clipboard and sending Cmd+V, then
 restoring what was on the clipboard before. That works in nearly every app,

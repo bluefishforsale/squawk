@@ -27,6 +27,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private lazy var hotkeys = HotkeyMonitor(binding: Preferences.binding)
     private let recorder = Recorder()
     private let overlay = ListeningOverlay()
+    private let muter = OutputMuter()
     private let transcriber = Transcriber()
     private var gesture = HoldGesture()
     private var status = Status.preparing
@@ -79,6 +80,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             tail.heard(rms: rms, at: ProcessInfo.processInfo.systemUptime)
         }
         recorder.onError = { [unowned self] error in
+            muter.restore()
             overlay.hide()
             gesture = HoldGesture()
             show(.problem("Microphone: \(error.localizedDescription)"))
@@ -97,6 +99,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         updateTimer = .scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { [unowned self] _ in
             checkForUpdate()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Never leave the Mac silent because Squawk quit mid-dictation.
+        muter.restore()
     }
 
     private func checkForUpdate() {
@@ -210,8 +217,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [self] in
             hotkeys.binding = Preferences.binding
             applyPause()
-            recorder.setReadiness(
-                Preferences.microphone, enabled: Preferences.isEnabled, cancelEcho: Preferences.cancelEcho)
+            recorder.setReadiness(Preferences.microphone, enabled: Preferences.isEnabled)
             if !Preferences.checkForUpdates {
                 panel.update = nil
                 if panel.modelProgress == .idle { panel.modelUpdate = nil }
@@ -226,6 +232,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hotkeys.isPaused = paused
         guard paused else { return }
         // Whatever was in flight when dictation was switched off is dropped.
+        muter.restore()
         recorder.cancel()
         overlay.hide()
         gesture = HoldGesture()
@@ -245,12 +252,20 @@ final class AppController: NSObject, NSApplicationDelegate {
             overlay.show()
             CATransaction.flush()
             playSound("Tink")
+            if Preferences.muteOutput {
+                // After the start sound has had time to be heard. The check
+                // keeps a quick tap from muting after it has already ended.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [unowned self] in
+                    if case .recording = status { muter.mute() }
+                }
+            }
             tail = SpeechTail()
             recorder.start()
             unloadTimer?.invalidate()
             // Warm the models while the user is still talking.
             Task { try? await transcriber.prepare(names: Preferences.names) }
         case .discard:
+            muter.restore()
             recorder.cancel()
             overlay.hide()
             show(.idle)
@@ -261,13 +276,18 @@ final class AppController: NSObject, NSApplicationDelegate {
             // mid-word comes back from the model empty or as a wrong word.
             show(.working)
             overlay.hide()
-            playSound("Pop")
+            // While muted the stop sound waits for the tail to end, or it
+            // would not be heard.
+            let wasMuting = Preferences.muteOutput
+            if !wasMuting { playSound("Pop") }
             let releasedAt = ProcessInfo.processInfo.systemUptime
             let work = DispatchWorkItem { [unowned self] in
                 pendingFinish = nil
                 let waited = ProcessInfo.processInfo.systemUptime - releasedAt
                 log.notice("tail: \(Int(waited * 1000), privacy: .public) ms")
                 finish()
+                muter.restore()
+                if wasMuting { playSound("Pop") }
             }
             pendingFinish = work
             finishWhenQuiet(work, releasedAt: releasedAt)

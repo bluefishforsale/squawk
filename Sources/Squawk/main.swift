@@ -6,8 +6,7 @@
 // disk image, with the same signature and version checks as a real update.
 // `--check-model` reports whether Hugging Face has newer weights than the
 // ones on disk, and `--install-model <revision>` installs that revision.
-// `--listen <seconds>` records from the microphone and prints the transcript;
-// add `--cancel-echo` to compare with and without echo cancellation.
+// `--listen <seconds>` records from the microphone and prints the transcript.
 // `--render-panes <folder>` writes a PNG of each pane of the panel, which is
 // how the README screenshots are made (see scripts/screenshots.sh).
 
@@ -92,7 +91,7 @@ if let seconds = values(after: "--listen").first.flatMap(Double.init) {
         FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
         exit(1)
     }
-    recorder.setReadiness(.onDemand, enabled: true, cancelEcho: arguments.contains("--cancel-echo"))
+    recorder.setReadiness(.onDemand, enabled: true)
     Task {
         do {
             let started = Date()
