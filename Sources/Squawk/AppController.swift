@@ -326,7 +326,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         } catch {
             return show(.problem("Audio: \(error.localizedDescription)"))
         }
-        log.notice("recorded \(samples.count, privacy: .public) samples at 16 kHz")
+        // The level says whether a silent recording or a noisy room is behind
+        // an empty transcript, without logging anything that was said.
+        let level = (samples.reduce(0) { $0 + $1 * $1 } / Float(max(samples.count, 1))).squareRoot()
+        log.notice("recorded \(samples.count, privacy: .public) samples at 16 kHz, rms \(level, privacy: .public)")
         guard samples.count >= Transcriber.minimumSamples else {
             show(.idle)
             return scheduleUnload()

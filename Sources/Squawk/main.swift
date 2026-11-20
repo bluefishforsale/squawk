@@ -6,7 +6,8 @@
 // disk image, with the same signature and version checks as a real update.
 // `--check-model` reports whether Hugging Face has newer weights than the
 // ones on disk, and `--install-model <revision>` installs that revision.
-// `--listen <seconds>` records from the microphone and prints the transcript.
+// `--listen <seconds>` records from the microphone and prints the transcript;
+// add `--mute` to silence the output meanwhile, as the app's setting does.
 // `--render-panes <folder>` writes a PNG of each pane of the panel, which is
 // how the README screenshots are made (see scripts/screenshots.sh).
 
@@ -86,6 +87,11 @@ if let revision = values(after: "--install-model").first {
 }
 
 if let seconds = values(after: "--listen").first.flatMap(Double.init) {
+    let muter = OutputMuter()
+    if arguments.contains("--mute") {
+        muter.mute()
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { muter.restore() }
+    }
     let recorder = Recorder()
     recorder.onError = { error in
         FileHandle.standardError.write(Data("squawk: \(error.localizedDescription)\n".utf8))
