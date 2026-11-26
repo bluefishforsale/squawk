@@ -13,6 +13,7 @@ enum Preferences {
     static let rewriteLikeKey = "rewriteLike"
     static let spaceAfterPunctuationKey = "spaceAfterPunctuation"
     static let endWithPeriodKey = "endWithPeriod"
+    static let formatNumbersKey = "formatNumbers"
     static let playSoundsKey = "playSounds"
     static let microphoneKey = "microphone"
     static let muteOutputKey = "muteOutput"
@@ -29,6 +30,7 @@ enum Preferences {
             rewriteLikeKey: false,
             spaceAfterPunctuationKey: true,
             endWithPeriodKey: true,
+            formatNumbersKey: true,
             playSoundsKey: true,
             microphoneKey: MicrophoneReadiness.onDemand.rawValue,
             unloadMinutesKey: 10,
@@ -57,6 +59,7 @@ enum Preferences {
             rewriteLike: defaults.bool(forKey: rewriteLikeKey),
             spaceAfterPunctuation: defaults.bool(forKey: spaceAfterPunctuationKey),
             endWithPeriod: defaults.bool(forKey: endWithPeriodKey),
+            formatNumbers: defaults.bool(forKey: formatNumbersKey),
             replacements: Replacement.parse(defaults.string(forKey: replacementsKey) ?? ""))
     }
 
@@ -128,6 +131,7 @@ struct PanelView: View {
     @AppStorage(Preferences.rewriteLikeKey) private var rewriteLike = false
     @AppStorage(Preferences.spaceAfterPunctuationKey) private var spaceAfterPunctuation = true
     @AppStorage(Preferences.endWithPeriodKey) private var endWithPeriod = true
+    @AppStorage(Preferences.formatNumbersKey) private var formatNumbers = true
     @AppStorage(Preferences.playSoundsKey) private var playSounds = true
     @AppStorage(Preferences.microphoneKey) private var microphone = MicrophoneReadiness.onDemand
     @AppStorage(Preferences.muteOutputKey) private var muteOutput = false
@@ -241,6 +245,9 @@ struct PanelView: View {
                         .help("Also puts a space between one dictation and the next.")
                     Divider()
                     Row("End with a full stop") { Switch(isOn: $endWithPeriod) }
+                    Divider()
+                    Row("Numbers 10 and up as digits") { Switch(isOn: $formatNumbers) }
+                        .help("Zero to nine stay words. Phone numbers get hyphens: 541-226-3843.")
         }
     }
 

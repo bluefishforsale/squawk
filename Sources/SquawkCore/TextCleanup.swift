@@ -35,6 +35,8 @@ public struct TextCleanup: Sendable {
     /// The recognizer reads level or trailing-off intonation as an unfinished
     /// sentence and leaves the full stop out; this puts it back.
     public var endWithPeriod: Bool
+    /// Zero to nine as words, ten and up as digits, phone numbers hyphenated.
+    public var formatNumbers: Bool
     public var replacements: [Replacement]
 
     public init(
@@ -42,12 +44,14 @@ public struct TextCleanup: Sendable {
         rewriteLike: Bool = false,
         spaceAfterPunctuation: Bool = true,
         endWithPeriod: Bool = true,
+        formatNumbers: Bool = true,
         replacements: [Replacement] = []
     ) {
         self.removeFillers = removeFillers
         self.rewriteLike = rewriteLike
         self.spaceAfterPunctuation = spaceAfterPunctuation
         self.endWithPeriod = endWithPeriod
+        self.formatNumbers = formatNumbers
         self.replacements = replacements
     }
 
@@ -61,6 +65,9 @@ public struct TextCleanup: Sendable {
             text = text.replacingOccurrences(of: Self.likeBeforeIntensifier, with: "$1 ", options: .regularExpression)
             text = text.replacingOccurrences(of: Self.quotativeLike, with: "$1 said, ", options: .regularExpression)
             text = Self.removing(Self.fillerLike, from: text)
+        }
+        if formatNumbers {
+            text = NumberFormatting.apply(text)
         }
         for rule in replacements {
             let pattern = #"(?i)(?<![\p{L}\p{N}])"# + NSRegularExpression.escapedPattern(for: rule.spoken)
