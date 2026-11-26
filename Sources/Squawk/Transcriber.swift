@@ -194,10 +194,10 @@ actor Transcriber {
     /// NOTE: measured on synthesized speech only. Too low and names stop being
     /// fixed; too high and ordinary sound-alike words get replaced.
     ///
-    /// The similarity floor of 0.9 limits candidates to the name and its
-    /// listed sound-alikes, near enough letter for letter. Misheard names come
-    /// back as a listed spelling (similarity 1.0), while the false hits were
-    /// mere resemblance: "Terra" for "terrace" at 0.83 and "Merge" at 0.40.
-    /// A new mishearing is fixed by training it, not by a looser floor.
-    private static let dictationThresholds = VocabularyBoostingSession.Thresholds(cbw: 1.0, minSimilarity: 0.9)
+    /// The similarity floor of 1.0 means a word is only a candidate when it
+    /// is spelled exactly like the name or a listed sound-alike, ignoring
+    /// case. Misheard names come back as a listed spelling, while the false
+    /// hits were mere resemblance: "Terra" for "terrace" at 0.83 and "Merge"
+    /// at 0.40. A new mishearing is fixed by training it, never by guessing.
+    private static let dictationThresholds = VocabularyBoostingSession.Thresholds(cbw: 1.0, minSimilarity: 1.0)
 }
