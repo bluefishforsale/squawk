@@ -14,6 +14,12 @@ public enum SpokenHostname {
                 of: #"\s+dot\s+"#, with: ".", options: [.regularExpression, .caseInsensitive])
             text.replaceSubrange(range, with: joined.lowercased())
         }
+        // The recognizer capitalizes a hostname that starts a sentence:
+        // "Home.teric.com", "SSH to Ocean.home".
+        for match in written.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let range = Range(match.range, in: text) else { continue }
+            text.replaceSubrange(range, with: text[range].lowercased())
+        }
         return text
     }
 
@@ -29,4 +35,10 @@ public enum SpokenHostname {
     private static let spoken = try! NSRegularExpression(
         pattern: #"(?i)(?<![\p{L}\p{N}.@/-])"# + label + #"(?:(?:\s+dot\s+|\.)"# + label + #")*"#
             + #"\s+dot\s+(?:"# + topLevelDomains.joined(separator: "|") + #")(?![\p{L}\p{N}-])"#)
+
+    /// NOTE: the top-level domain must already be lowercase, so a missing
+    /// space in "by the Ocean.Home is" is not taken for a hostname.
+    private static let written = try! NSRegularExpression(
+        pattern: #"(?<![\p{L}\p{N}.@/-])"# + label + #"(?:\."# + label + #")*\.(?:"#
+            + topLevelDomains.joined(separator: "|") + #")(?![\p{L}\p{N}-])"#)
 }

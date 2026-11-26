@@ -15,6 +15,15 @@ import Testing
         #expect(SpokenHostname.joining("ssh to ocean dot home") == "ssh to ocean.home")
     }
 
+    @Test func hostnameCapitalizedAtSentenceStartIsLowercased() {
+        #expect(SpokenHostname.joining("Home.teric.com SSH to Ocean.home") == "home.teric.com SSH to ocean.home")
+    }
+
+    @Test func missingSpaceBeforeACapitalizedWordIsNotAHostname() {
+        let text = "We swam by the Ocean.Home is far."
+        #expect(SpokenHostname.joining(text) == text)
+    }
+
     @Test func dotInProseIsLeftAlone() {
         let text = "Connect the dot to the line, then dot the i."
         #expect(SpokenHostname.joining(text) == text)
