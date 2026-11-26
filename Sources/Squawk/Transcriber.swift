@@ -137,10 +137,14 @@ actor Transcriber {
         } catch {
             return Output(text: result.text, warning: "Name correction unavailable: \(error.localizedDescription)")
         }
-        guard let session else { return Output(text: result.text) }
+        let heard = NameEntry.correctingAddresses(in: result.text, names: names)
+        guard let session else { return Output(text: heard) }
         let rescored = await session.rescore(
-            text: result.text, tokenTimings: result.tokenTimings ?? [], audioSamples: samples)
-        return Output(text: rescored?.text ?? result.text)
+            text: heard, tokenTimings: result.tokenTimings ?? [], audioSamples: samples)
+        guard let rescored,
+            !rescored.replacements.contains(where: { $0.shouldReplace && NameEntry.isAddress($0.originalWord) })
+        else { return Output(text: heard) }
+        return Output(text: rescored.text)
     }
 
     func unload() async {
@@ -166,7 +170,7 @@ actor Transcriber {
         defer { if !isInstalling { ModelHub.offlineMode = true } }
         let models = try await CtcModels.downloadAndLoad()
 
-        let terms = names.map { CustomVocabularyTerm(text: $0.name, aliases: $0.aliases) }
+        let terms = names.map { CustomVocabularyTerm(text: $0.name, aliases: $0.rescoringAliases) }
         let session = try await VocabularyBoostingSession(
             vocabulary: CustomVocabularyContext(terms: terms), ctcModels: models, config: Self.dictationConfig,
             thresholds: Self.dictationThresholds)
@@ -176,11 +180,11 @@ actor Transcriber {
 
     /// FluidAudio's defaults are tuned for keyword recall and will swap a term
     /// in on acoustic evidence alone. In dictation most sentences contain none
-    /// of the listed names, so require the transcript to at least resemble the
-    /// name or one of its sound-alikes before the audio is consulted.
-    private static let dictationConfig = VocabularyRescorer.Config(
-        spotterRescueMinSimilarity: 0.30,
-        spotterRescueMultiWordMinSimilarity: 0.50)
+    /// of the listed names, so a name only replaces words that resemble it or
+    /// one of its sound-alikes. The spotter rescue that skips that check is
+    /// off: it turned "terrace" into "Terrac" and swallowed multi-word spans
+    /// like "Terek Skeens" into one name.
+    private static let dictationConfig = VocabularyRescorer.Config(spotterRescueEnabled: false)
 
     /// How much benefit of the doubt a listed name gets over the word that was
     /// transcribed. FluidAudio's default of 4.5 rewrote a real "Derek" and
@@ -189,5 +193,11 @@ actor Transcriber {
     /// as "Tarek" is still corrected (it won by 0.1 before any bonus).
     /// NOTE: measured on synthesized speech only. Too low and names stop being
     /// fixed; too high and ordinary sound-alike words get replaced.
-    private static let dictationThresholds = VocabularyBoostingSession.Thresholds(cbw: 1.0)
+    ///
+    /// The similarity floor of 0.9 limits candidates to the name and its
+    /// listed sound-alikes, near enough letter for letter. Misheard names come
+    /// back as a listed spelling (similarity 1.0), while the false hits were
+    /// mere resemblance: "Terra" for "terrace" at 0.83 and "Merge" at 0.40.
+    /// A new mishearing is fixed by training it, not by a looser floor.
+    private static let dictationThresholds = VocabularyBoostingSession.Thresholds(cbw: 1.0, minSimilarity: 0.9)
 }
