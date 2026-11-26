@@ -128,4 +128,37 @@ import Testing
         entry.learn(heard: "Skeens, skien, Skeans.")
         #expect(entry.soundsLike == "skeens, skien, Skeans")
     }
+
+    @Test func trainingSkipsAFullNameHeardWhileTrainingOneWord() {
+        var entry = NameEntry(text: "Terrac", soundsLike: "terek")
+        entry.learn(heard: "Terrick Skeptic, Tarik")
+        #expect(entry.soundsLike == "terek, Tarik")
+    }
+
+    @Test func multiWordSoundAlikeCannotSwallowSpeechIntoAOneWordName() {
+        let entry = NameEntry(text: "Terrac", soundsLike: "terek, Terrick Skeens")
+        #expect(entry.rescoringAliases == ["terek"])
+        #expect(entry.aliases == ["terek", "Terrick Skeens"])
+    }
+
+    @Test func nameInsideAHostnameIsFixedBySpellingInLowercase() {
+        let names = [NameEntry(text: "Terrac", soundsLike: "tarek, teric")]
+        #expect(
+            NameEntry.correctingAddresses(in: "Open home.Teric.com and tarek.dev now", names: names)
+                == "Open home.terrac.com and terrac.dev now")
+    }
+
+    @Test func hostnameFixLeavesProseDecimalsAndMissingSpacesAlone() {
+        let names = [NameEntry(text: "Terrac", soundsLike: "tarek")]
+        let text = "Tarek said 3.5 works.Tarek agreed."
+        #expect(NameEntry.correctingAddresses(in: text, names: names) == text)
+    }
+
+    @Test func addressesAreRecognizedSoTheRescorerLeavesThemWhole() {
+        #expect(NameEntry.isAddress("home.tarek.com"))
+        #expect(NameEntry.isAddress("tarek@example"))
+        #expect(NameEntry.isAddress("src/tarek"))
+        #expect(!NameEntry.isAddress("Tarek."))
+        #expect(!NameEntry.isAddress("3.5"))
+    }
 }
