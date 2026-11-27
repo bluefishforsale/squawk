@@ -69,6 +69,26 @@ import Testing
         #expect(format("id 1234567890") == "id 1234567890")
     }
 
+    @Test func dateWithCompoundOrdinalFromTheFailedDictation() {
+        #expect(format("like January 20 eighth is when") == "like January 28th is when")
+        #expect(format("January twenty-eighth twenty twenty six") == "January 28th 2026")
+    }
+
+    @Test func teenAndTensOrdinalsBecomeDigitsWithTheRightSuffix() {
+        #expect(format("the eleventh, twelfth, thirteenth and twentieth") == "the 11th, 12th, 13th and 20th")
+        #expect(format("thirty first, forty second and fifty third") == "31st, 42nd and 53rd")
+    }
+
+    @Test func ordinalsUnderTenStayWords() {
+        let text = "The first time, the second try and the ninth day"
+        #expect(format(text) == text)
+    }
+
+    @Test func fractionsKeepTheirWords() {
+        let text = "a tenth of it and one twentieth of that"
+        #expect(format(text) == text)
+    }
+
     @Test func numbersUntouchedWhenTheSettingIsOff() {
         let text = "I have 3 cats and twenty dogs"
         #expect(TextCleanup(endWithPeriod: false, formatNumbers: false).apply(text) == text)
