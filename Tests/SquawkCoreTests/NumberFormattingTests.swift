@@ -89,6 +89,42 @@ import Testing
         #expect(format(text) == text)
     }
 
+    @Test func hundredsBeforeAnOrdinalJoinItInsteadOfStandingApart() {
+        #expect(format("one hundred twenty first") == "121st")
+        #expect(format("one hundred first and a hundred and tenth") == "101st and 110th")
+        #expect(format("the two thousand fifth visitor") == "the 2005th visitor")
+    }
+
+    @Test func hundredthOnItsOwnBecomesDigits() {
+        #expect(format("the hundredth time") == "the 100th time")
+    }
+
+    @Test func hundredthAfterANumberWordKeepsItsWords() {
+        let text = "one hundredth of a second, two hundredth"
+        #expect(format(text) == text)
+    }
+
+    @Test func ordinalAfterAOrOneIsAFractionOrADurationAndKeepsItsWords() {
+        let text = "a thirty second clip, a 30 second clip and one twenty fifth of it"
+        #expect(format(text) == text)
+    }
+
+    @Test func secondWithoutAOrOneBeforeItIsStillAnOrdinal() {
+        #expect(format("January twenty second and the forty second street") == "January 22nd and the 42nd street")
+    }
+
+    @Test func currencyBeforeACompoundOrdinalIsNotPartOfIt() {
+        let text = "it cost $20 first and £30 second"
+        #expect(format(text) == text)
+    }
+
+    @Test func capitalisedOrdinalsFollowTheSameRules() {
+        #expect(format("One Hundred Twenty First Street") == "121st Street")
+        #expect(format("The Hundredth Day, January Twenty-Second") == "The 100th Day, January 22nd")
+        let text = "A Thirty Second Clip and One Twenty Fifth"
+        #expect(format(text) == text)
+    }
+
     @Test func numbersUntouchedWhenTheSettingIsOff() {
         let text = "I have 3 cats and twenty dogs"
         #expect(TextCleanup(endWithPeriod: false, formatNumbers: false).apply(text) == text)

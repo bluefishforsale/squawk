@@ -24,42 +24,74 @@ enum NumberFormatting {
         "twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth", "ninetieth",
     ]
 
-    /// "twenty eighth" and "20 eighth" (the recognizer writes both), and a
-    /// teen or tens ordinal on its own. "first" to "ninth" alone stay words,
-    /// like the cardinals under ten.
-    /// NOTE: "a tenth of" and "one twentieth" are fractions, so a lone teen or
-    /// tens ordinal after "a" or "one" is left alone. "A twenty second delay"
-    /// still becomes "22nd"; the words alone cannot tell it from a date.
+    /// "twenty eighth" and "20 eighth" (the recognizer writes both), a teen or
+    /// tens ordinal or "hundredth" on its own, and any of those or "first" to
+    /// "ninth" after a number that ends in "hundred" or a scale word ("one
+    /// hundred twenty first", "a hundred and first"). "first" to "ninth"
+    /// alone stay words, like the cardinals under ten.
+    /// NOTE: after "a" or "one" an ordinal is a fraction ("a tenth of", "one
+    /// twenty fifth") or a duration ("a thirty second clip"), so it is left
+    /// alone, compounds included. Without the "a" the words cannot tell "thirty
+    /// second delay" from "forty second street", and both become ordinals.
     private static let ordinal: NSRegularExpression = {
         let tens: String = tensNames.joined(separator: "|")
         let units: String = unitOrdinals.joined(separator: "|")
-        let lone: String = (teenOrdinals + tensOrdinals).joined(separator: "|")
-        let compound: String = "(?:(" + tens + ")|([2-9]0))[\\s-]+(" + units + ")"
-        let alone: String = "(?<!\\ba\\s|\\bone\\s)(" + lone + ")"
-        let pattern: String = "(?i)(?<![\\p{L}\\p{N}'’])(?:" + compound + "|" + alone + ")(?![\\p{L}\\p{N}'’])"
+        let lone: String = (teenOrdinals + tensOrdinals + ["hundredth"]).joined(separator: "|")
+        let cardinalWord: String = (unitNames + teenNames + tensNames).joined(separator: "|")
+        let multiplier: String = (["hundred"] + scales.keys.sorted()).joined(separator: "|")
+        let lead: String = "(?<lead>(?:a[\\s-]+)?(?:(?:" + cardinalWord + "|" + multiplier + ")[\\s-]+)*?(?:"
+            + multiplier + "))(?:\\s+and)?[\\s-]+"
+        let compound: String = "(?<![$£€#])(?:(?<tens>" + tens + ")|(?<tensDigits>[2-9]0))[\\s-]+(?<unit>" + units + ")"
+        let tail: String = "(?<!\\ba\\s|\\bone\\s)(?:" + compound + "|(?<lone>" + lone + ")|(?<leadUnit>" + units + "))"
+        let pattern: String = "(?i)(?<![\\p{L}\\p{N}'’])(?:" + lead + ")?" + tail + "(?![\\p{L}\\p{N}'’])"
         return try! NSRegularExpression(pattern: pattern)
     }()
 
     private static func ordinalsToDigits(_ transcript: String) -> String {
         var text = transcript
         for match in ordinal.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
-            guard let range = Range(match.range, in: text) else { continue }
-            func group(_ index: Int) -> String? {
-                Range(match.range(at: index), in: text).map { text[$0].lowercased() }
+            func range(_ name: String) -> Range<String.Index>? {
+                Range(match.range(withName: name), in: text)
             }
+            func group(_ name: String) -> String? {
+                range(name).map { text[$0].lowercased() }
+            }
+            guard let whole = Range(match.range, in: text),
+                let tailStart = ["tens", "tensDigits", "lone", "leadUnit"].compactMap({ range($0)?.lowerBound }).min()
+            else { continue }
+            let lead = group("lead").flatMap(leadValue)
             let value: Int
-            if let unit = group(3).flatMap(unitOrdinals.firstIndex(of:)) {
-                let tens = group(1).flatMap(tensNames.firstIndex(of:)).map { ($0 + 2) * 10 } ?? Int(group(2) ?? "") ?? 0
+            if let unit = (group("unit") ?? group("leadUnit")).flatMap(unitOrdinals.firstIndex(of:)) {
+                if group("leadUnit") != nil, lead == nil { continue }
+                let tens = group("tens").flatMap(tensNames.firstIndex(of:)).map { ($0 + 2) * 10 } ?? Int(group("tensDigits") ?? "") ?? 0
                 value = tens + unit + 1
-            } else if let lone = group(4) {
-                value = teenOrdinals.firstIndex(of: lone).map { $0 + 10 }
-                    ?? (tensOrdinals.firstIndex(of: lone)! + 2) * 10
+            } else if let lone = group("lone") {
+                if lone == "hundredth" {
+                    // "two hundredth" and "one thousand hundredth" are not 100th.
+                    guard group("lead") == nil, !followsNumberWord(text[..<tailStart]) else { continue }
+                    value = 100
+                } else {
+                    value = teenOrdinals.firstIndex(of: lone).map { $0 + 10 }
+                        ?? (tensOrdinals.firstIndex(of: lone)! + 2) * 10
+                }
             } else {
                 continue
             }
-            text.replaceSubrange(range, with: "\(value)\(ordinalSuffix(value))")
+            let total = (lead ?? 0) + value
+            text.replaceSubrange(lead == nil ? tailStart..<whole.upperBound : whole, with: "\(grouped(total))\(ordinalSuffix(total))")
         }
         return text
+    }
+
+    /// The number before the ordinal, or nil when those words do not make one
+    /// number ("nine five hundred").
+    private static func leadValue(_ words: String) -> Int? {
+        Int(wordsToDigits(words).replacingOccurrences(of: ",", with: ""))
+    }
+
+    private static func followsNumberWord(_ before: Substring) -> Bool {
+        let last = before.trimmingCharacters(in: .whitespaces).split(whereSeparator: { !$0.isLetter }).last
+        return last.map { numberWords.contains($0.lowercased()) } ?? false
     }
 
     private static func ordinalSuffix(_ value: Int) -> String {
@@ -127,10 +159,25 @@ enum NumberFormatting {
             }
         }
         for run in runs.reversed() {
+            if tensNames.contains(text[run.last!].lowercased()), startsWithUnitOrdinal(text[run.last!.upperBound...]) {
+                continue
+            }
             guard let rewritten = Run(text: text, words: run).rewritten() else { continue }
             text.replaceSubrange(run.first!.lowerBound..<run.last!.upperBound, with: rewritten)
         }
         return text
+    }
+
+    /// NOTE: a tens word right before "first" to "ninth" is a compound ordinal
+    /// the ordinal pass left alone on purpose ("one twenty fifth", "a thirty
+    /// second clip"). Turning only its cardinal half into digits would give
+    /// "one 20 fifth".
+    private static let unitOrdinalAhead = try! NSRegularExpression(
+        pattern: "(?i)^[\\s-]+(?:" + unitOrdinals.joined(separator: "|") + ")(?![\\p{L}\\p{N}'’])")
+
+    private static func startsWithUnitOrdinal(_ after: Substring) -> Bool {
+        let after = String(after)
+        return unitOrdinalAhead.firstMatch(in: after, range: NSRange(after.startIndex..., in: after)) != nil
     }
 
     private static func isGap(_ gap: Substring) -> Bool {
