@@ -131,20 +131,28 @@ actor Transcriber {
         var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
         let result = try await manager.transcribe(samples, decoderState: &state)
 
+        // NOTE: spoken hostnames are joined only after rescoring. Joining
+        // changes the word count, and the rescorer lines words up with the
+        // decoder's token timings.
+        func finished(_ text: String) -> String {
+            NameEntry.correctingAddresses(in: SpokenHostname.joining(text), names: names)
+        }
         let session: VocabularyBoostingSession?
         do {
             session = try await self.session(for: names)
         } catch {
-            return Output(text: result.text, warning: "Name correction unavailable: \(error.localizedDescription)")
+            return Output(
+                text: SpokenHostname.joining(result.text),
+                warning: "Name correction unavailable: \(error.localizedDescription)")
         }
         let heard = NameEntry.correctingAddresses(in: result.text, names: names)
-        guard let session else { return Output(text: heard) }
+        guard let session else { return Output(text: finished(heard)) }
         let rescored = await session.rescore(
             text: heard, tokenTimings: result.tokenTimings ?? [], audioSamples: samples)
         guard let rescored,
             !rescored.replacements.contains(where: { $0.shouldReplace && NameEntry.isAddress($0.originalWord) })
-        else { return Output(text: heard) }
-        return Output(text: rescored.text)
+        else { return Output(text: finished(heard)) }
+        return Output(text: finished(rescored.text))
     }
 
     func unload() async {
