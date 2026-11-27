@@ -9,8 +9,67 @@ enum NumberFormatting {
     static func apply(_ transcript: String) -> String {
         // Phone numbers twice: first so the "1" in "1 541 226 3843" is not
         // spelled out, then again for the ones that were read out as words.
-        let written = hyphenatingPhoneNumbers(in: transcript)
+        let written = ordinalsToDigits(hyphenatingPhoneNumbers(in: transcript))
         return hyphenatingPhoneNumbers(in: wordsToDigits(digitsToWords(written)))
+    }
+
+    // MARK: Ordinals
+
+    private static let unitOrdinals = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"]
+    private static let teenOrdinals = [
+        "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth",
+        "eighteenth", "nineteenth",
+    ]
+    private static let tensOrdinals = [
+        "twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth", "ninetieth",
+    ]
+
+    /// "twenty eighth" and "20 eighth" (the recognizer writes both), and a
+    /// teen or tens ordinal on its own. "first" to "ninth" alone stay words,
+    /// like the cardinals under ten.
+    /// NOTE: "a tenth of" and "one twentieth" are fractions, so a lone teen or
+    /// tens ordinal after "a" or "one" is left alone. "A twenty second delay"
+    /// still becomes "22nd"; the words alone cannot tell it from a date.
+    private static let ordinal: NSRegularExpression = {
+        let tens: String = tensNames.joined(separator: "|")
+        let units: String = unitOrdinals.joined(separator: "|")
+        let lone: String = (teenOrdinals + tensOrdinals).joined(separator: "|")
+        let compound: String = "(?:(" + tens + ")|([2-9]0))[\\s-]+(" + units + ")"
+        let alone: String = "(?<!\\ba\\s|\\bone\\s)(" + lone + ")"
+        let pattern: String = "(?i)(?<![\\p{L}\\p{N}'’])(?:" + compound + "|" + alone + ")(?![\\p{L}\\p{N}'’])"
+        return try! NSRegularExpression(pattern: pattern)
+    }()
+
+    private static func ordinalsToDigits(_ transcript: String) -> String {
+        var text = transcript
+        for match in ordinal.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let range = Range(match.range, in: text) else { continue }
+            func group(_ index: Int) -> String? {
+                Range(match.range(at: index), in: text).map { text[$0].lowercased() }
+            }
+            let value: Int
+            if let unit = group(3).flatMap(unitOrdinals.firstIndex(of:)) {
+                let tens = group(1).flatMap(tensNames.firstIndex(of:)).map { ($0 + 2) * 10 } ?? Int(group(2) ?? "") ?? 0
+                value = tens + unit + 1
+            } else if let lone = group(4) {
+                value = teenOrdinals.firstIndex(of: lone).map { $0 + 10 }
+                    ?? (tensOrdinals.firstIndex(of: lone)! + 2) * 10
+            } else {
+                continue
+            }
+            text.replaceSubrange(range, with: "\(value)\(ordinalSuffix(value))")
+        }
+        return text
+    }
+
+    private static func ordinalSuffix(_ value: Int) -> String {
+        if (11...13).contains(value % 100) { return "th" }
+        switch value % 10 {
+        case 1: return "st"
+        case 2: return "nd"
+        case 3: return "rd"
+        default: return "th"
+        }
     }
 
     // MARK: Digits to words
